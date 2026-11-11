@@ -11,6 +11,12 @@ not include Infinifolder's remote clients, torrent engine or virtual filesystem
 implementation. The small shared UI and resource-support libraries adapt content
 URIs without depending on another application's source.
 
+## Build script
+
+`./build.sh` builds the debug APK and runs the application's JVM unit tests.
+It fetches only the pinned library closure before invoking this checkout's Gradle wrapper.
+Additional Gradle arguments are forwarded unchanged, for example `--max-workers=1` or `-PtargetAbi=arm64-v8a`.
+
 ## Fresh checkout build
 
 Install JDK 17 or 21, Python 3, Android SDK platform 36, build tools 35.0.0,
