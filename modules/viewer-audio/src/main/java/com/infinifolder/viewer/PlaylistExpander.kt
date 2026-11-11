@@ -5,7 +5,7 @@ import android.net.Uri
 import com.infinifolder.archive.ArchiveFormats
 import com.infinifolder.archive.ArchiveUri
 import com.infinifolder.model.ResourceEntry
-import com.infinifolder.playlist.PlaylistParser
+import com.infinifolder.audio.playlist.PlaylistParser
 import java.io.File
 import java.net.URI
 import java.net.URLDecoder

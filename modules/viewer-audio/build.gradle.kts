@@ -34,3 +34,14 @@ if ((System.getenv("TERMUX_VERSION") != null)) {
         jvmArgs("-Djava.library.path=${nativeDir.resolve("arm64-v8a")}")
     }
 }
+
+// Codec/playlist fixtures belong to the declared Sound source dependency.
+tasks.withType<Test>().configureEach {
+    val fixtures = gradle.includedBuild("libinfinisound").projectDir.resolve("audio-core/src/test/resources")
+    inputs.dir(fixtures.resolve("audio"))
+    inputs.dir(fixtures.resolve("playlists"))
+    systemProperty("infini.audio.fixtures", fixtures.resolve("audio").absolutePath)
+    systemProperty("infini.playlist.fixtures", fixtures.resolve("playlists").absolutePath)
+    val report = layout.buildDirectory.file("reports/audio-playback-authoritative-report.md")
+    systemProperty("infini.audio.report", report.get().asFile.absolutePath)
+}

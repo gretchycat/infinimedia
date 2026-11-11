@@ -4,7 +4,7 @@ import com.infinifolder.audio.decoder.UniversalAudioDecoder
 import com.infinifolder.audio.diagnostics.AudioHealthStatus
 import com.infinifolder.audio.diagnostics.AudioPlaybackDiagnostics
 import com.infinifolder.audio.diagnostics.AudioPlaybackReport
-import com.infinifolder.playlist.PlaylistParser
+import com.infinifolder.audio.playlist.PlaylistParser
 import com.infinifolder.mime.MimeRegistry
 import com.infinifolder.storage.FileMagicDetector
 import org.junit.Assert.assertNotNull
@@ -14,9 +14,7 @@ import java.io.File
 
 class AudioPlaybackDiagnosticsFixtureTest {
 
-    private val fixtureDir = File("filesystem-test-images/audio").let {
-        if (it.exists()) it else File("../filesystem-test-images/audio")
-    }
+    private val fixtureDir = File(System.getProperty("infini.audio.fixtures"))
 
     @Test
     fun testInstrumentAndGenerateAuthoritativePlaybackReport() {
@@ -27,9 +25,7 @@ class AudioPlaybackDiagnosticsFixtureTest {
         assertTrue("Audio fixture directory must contain files", files.isNotEmpty())
 
         val results = mutableListOf<AudioPlaybackReport>()
-        val reportFile = File("docs/audio-playback-authoritative-report.md").let {
-            if (it.parentFile?.exists() == true) it else File("../docs/audio-playback-authoritative-report.md")
-        }
+        val reportFile = File(System.getProperty("infini.audio.report"))
 
         println("================================================================================")
         println("INSTRUMENTING AUDIO PLAYBACK ACROSS ALL ${files.size} TEST FIXTURES")

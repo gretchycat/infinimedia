@@ -9,7 +9,7 @@ import java.io.File
 class LibraryAudioPreparationTest {
     @get:Rule val temporary = TemporaryFolder()
     private fun fixture(ext: String): File {
-        val root = File("../filesystem-test-images/audio").takeIf { it.isDirectory } ?: File("filesystem-test-images/audio")
+        val root = File(System.getProperty("infini.audio.fixtures"))
         return File(root, "c_major_piano.$ext")
     }
     @Test fun linkedLibraryOwnsPlatformFallbackAndPreparesOnlyPcmForOutput() {

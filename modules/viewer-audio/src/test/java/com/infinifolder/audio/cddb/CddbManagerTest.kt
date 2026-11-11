@@ -1,6 +1,6 @@
 package com.infinifolder.audio.cddb
 
-import com.infinifolder.playlist.PlaylistParser
+import com.infinifolder.audio.playlist.PlaylistParser
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test

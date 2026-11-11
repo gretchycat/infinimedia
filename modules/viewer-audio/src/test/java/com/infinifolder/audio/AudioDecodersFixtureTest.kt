@@ -18,9 +18,7 @@ import java.io.File
 
 class AudioDecodersFixtureTest {
 
-    private val fixtureDir = File("filesystem-test-images/audio").let {
-        if (it.exists()) it else File("../filesystem-test-images/audio")
-    }
+    private val fixtureDir = File(System.getProperty("infini.audio.fixtures"))
 
     private fun readFixture(fileName: String): ByteArray {
         val f = File(fixtureDir, fileName)

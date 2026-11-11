@@ -20,13 +20,9 @@ class PlaylistExpanderTest {
         PlaylistExpander.uriFactory = { str -> TestUri(str) }
     }
 
-    private val playlistsDir = File("filesystem-test-images/playlists").let {
-        if (it.exists()) it else File("../filesystem-test-images/playlists")
-    }
+    private val playlistsDir = File(System.getProperty("infini.playlist.fixtures"))
 
-    private val audioDir = File("filesystem-test-images/audio").let {
-        if (it.exists()) it else File("../filesystem-test-images/audio")
-    }
+    private val audioDir = File(System.getProperty("infini.audio.fixtures"))
 
     @Test
     fun testDirectM3uPlaylistExpansion() {
