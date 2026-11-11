@@ -10,6 +10,7 @@ class PackagingTest(unittest.TestCase):
             self.assertEqual(a.read_bytes(),b.read_bytes())
             with zipfile.ZipFile(a) as archive:
                 self.assertIn('theme.json',archive.namelist())
+                self.assertIn('screenshot.png',archive.namelist())
                 for name in archive.namelist():self.assertEqual((source/name).read_bytes(),archive.read(name))
                 self.assertNotIn('README.md',archive.namelist())
     def test_missing_layer_fails(self):
