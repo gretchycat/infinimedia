@@ -57,8 +57,37 @@ Run `python3 scripts/test-android-build-env.py` for the build entry point's isol
 
 ## Owned media assets
 
-All four Winamp skin archives are packaged by `modules/viewer-audio/src/main/assets/skins`; original embedded author readmes are preserved. The optional original SF3 bank and its upstream license/provenance live in [`test-assets/soundfonts`](test-assets/soundfonts/README.md). They are outside production source sets, preserving the existing portable synthesizer/user-import behavior. Media tests require every archive and verify the bank's original hash. No asset fixture is read from Folder or another app.
+Infinimedia Default is the sole packaged skin, generated reproducibly from `theme/` by `scripts/package-default-theme.py`. The four original Winamp archives are preserved under `test-assets/skins` for compatibility tests, outside the APK; original embedded author readmes are preserved. The optional original SF3 bank and its upstream license/provenance live in [`test-assets/soundfonts`](test-assets/soundfonts/README.md). They are outside production source sets, preserving the existing portable synthesizer/user-import behavior. Media tests require every archive and verify the bank's original hash. No asset fixture is read from Folder or another app.
 
 ## Android verification checkpoint
 
 On 2026-11-11, implementation commit `9f53814` produced its debug APK and passed 76 unit tests in the user's independent Termux checkout. `./build.sh --max-workers=1 --console=plain` ran with SDK environment variables unset and no local.properties, plus a guard rejecting project/source roots outside that checkout. The 11 build-environment regression checks also passed. APK inspection found exactly four Winamp archives, no SF3 bank and no advanced Folder storage implementations. These checks do not establish device UI, grants or playback behavior. Ubuntu testing and other platform ports remain deferred.
+
+## Infinimedia Default theme
+
+The custom theme in [`theme/`](theme/README.md) is the default for new installations.
+Existing imported skins and explicit palette choices remain available; saved
+references to removed bundled archives fall back to this default artwork.
+Its corrected `main.iff` is the full opaque faceplate with native palette cycling.
+The visual media pane is framed with the VIDEO title sprite and GEN side/bottom
+pieces, scales with the player, and retains title-bar collapse and its 16:9 stage.
+Skin metadata names it **Infinimedia Default** and preserves the original artwork
+attribution to Sven Kistner, Zarko Jovic, GuidoD and Wildrose-Wally.
+
+Skin images use Canvas format discovery, so logical `main.bmp` sprite lookups can
+resolve IFF, PNG, SVG and other supported decoders. `theme.json` can select an
+arbitrary filename or up to four same-size image layers. IFF palette cycling and
+the supplied [`infini.svg`](infini.svg) indexed SVG extension animate while the
+player is resumed and pause with its lifecycle. See Canvas’s SVG palette-cycling
+API documentation for supported metadata and validation limits.
+
+```sh
+python3 scripts/test-package-default-theme.py
+# After ./build.sh, on a local Android 10+/Termux runtime:
+python3 scripts/verify-theme-runtime.py
+```
+
+The runtime probe checks real SVG/IFF pixels, cache play/pause/clear, format
+signature detection, and frame resizing. It exports full-frame PNG previews to
+`build/theme-runtime/`. It does not exercise Activity layout, touch input, video
+surfaces, Android permissions or visible on-device playback.

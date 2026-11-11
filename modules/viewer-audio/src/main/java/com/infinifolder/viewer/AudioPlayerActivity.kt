@@ -171,8 +171,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private lateinit var skinRightColumn: FrameLayout
     private lateinit var skinSpareColumn: FrameLayout
     private lateinit var skinDockedStack: LinearLayout
-    private lateinit var dockedVisualWindow: LinearLayout
-    private lateinit var dockedVisualTitle: TextView
+    private lateinit var dockedVisualWindow: WinampVisualFrameLayout
     private lateinit var dockedVisualBody: FrameLayout
     private lateinit var detailsWindow: LinearLayout
     private lateinit var detailsTitle: WinampPlaylistTitleView
@@ -320,9 +319,20 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         handleIntent(intent)
     }
 
+    private var skinAnimationHost: java.io.Closeable? = null
+
     override fun onResume() {
         super.onResume()
         isPlayerResumed = true
+        skinAnimationHost?.close()
+        skinAnimationHost = ThemeManager.registerSkinAnimationHost {
+            if (::winampMainWindowView.isInitialized) winampMainWindowView.invalidate()
+            if (::dockedTitleBarView.isInitialized) dockedTitleBarView.invalidate()
+            if (::dockedBottomBarView.isInitialized) dockedBottomBarView.invalidate()
+            if (::dockedLeftBorder.isInitialized) dockedLeftBorder.invalidate()
+            if (::dockedRightBorder.isInitialized) dockedRightBorder.invalidate()
+            if (::dockedVisualWindow.isInitialized) dockedVisualWindow.invalidate()
+        }
         applyTheme(ThemeManager.getAudioPlayerTheme(this))
         if (visualVideoWasPlayingBeforePause && AudioPlayerService.currentService?.currentTrack?.mediaKind == PlaylistMediaKind.VIDEO) {
             visualVideoPlayback?.play()
@@ -344,6 +354,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     }
 
     override fun onPause() {
+        skinAnimationHost?.close(); skinAnimationHost = null
         isPlayerResumed = false
         visualVideoWasPlayingBeforePause = visualVideoPlayback?.isPlaying == true
         if (visualVideoWasPlayingBeforePause) visualVideoPlayback?.pause()
@@ -1855,31 +1866,12 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         dockedSubWindow.addView(dockedBottomBarView)
     }
 
-    /** A second attached window, with its own unbranded title strip and 16:9 media stage. */
+    /** VIDEO title plus GEN edges surround the unchanged 16:9 media stage. */
     private fun setupDockedVisualWindow() {
-        dockedVisualWindow = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        dockedVisualWindow = WinampVisualFrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(-1, -2)
         }
-        dockedVisualTitle = TextView(this).apply {
-            text = "VISUAL MEDIA"
-            textSize = 10f
-            typeface = Typeface.MONOSPACE
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-            contentDescription = "Show or hide visual media"
-            isClickable = true
-            isFocusable = true
-            setOnClickListener {
-                val show = dockedVisualBody.visibility != View.VISIBLE
-                dockedVisualBody.visibility = if (show) View.VISIBLE else View.GONE
-            }
-        }
-        dockedVisualWindow.addView(dockedVisualTitle, LinearLayout.LayoutParams(-1, dp(24)))
-        dockedVisualBody = FrameLayout(this).apply {
-            setBackgroundColor(Color.BLACK)
-        }
-        dockedVisualWindow.addView(dockedVisualBody, LinearLayout.LayoutParams(-1, -2))
+        dockedVisualBody = dockedVisualWindow.body
     }
 
     private fun attachArtCardToVisualWindow(attached: Boolean) {
@@ -2625,16 +2617,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             dockedBottomBarView.invalidate()
             dockedSubTitleStrip.visibility = View.GONE
             dockedSubWindow.setBackgroundColor(theme.cardBackground)
-            dockedVisualWindow.setBackgroundColor(theme.cardBackground)
-            dockedVisualTitle.setTextColor(theme.textPrimary)
-            dockedVisualTitle.background = GradientDrawable().apply {
-                setColor(theme.toolbarBackground)
-                setStroke((1 * density).toInt().coerceAtLeast(1), theme.cardStroke)
-            }
-            dockedVisualBody.background = GradientDrawable().apply {
-                setColor(Color.BLACK)
-                setStroke((1 * density).toInt().coerceAtLeast(1), theme.cardStroke)
-            }
+            dockedVisualWindow.refreshTheme(theme)
             detailsWindow.setBackgroundColor(theme.cardBackground)
             detailsContent.setBackgroundColor(theme.cardBackground)
             skinSpareColumn.setBackgroundColor(theme.background)
@@ -2724,7 +2707,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             ThemeManager.createCardDrawable(theme, density)
         }
 
-        artCard.background = GradientDrawable().apply {
+        artCard.background = if (isWinamp) null else GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = dp(4).toFloat()
             setColor(Color.BLACK)
@@ -2935,12 +2918,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     }
 
     private fun showThemeChooser() {
-        val bundledSkins = listOf(
-            "Classic 2.91" to "skins/base-2.91.wsz",
-            "Bento Retro" to "skins/Bento_Classified.wsz",
-            "Classified v3" to "skins/Winamp3_Classified_v5.5.wsz",
-            "Classified v5" to "skins/Winamp5_Classified_v5.5.wsz"
-        )
+        val bundledSkins = listOf("Infinimedia Default" to "skins/Infini.wsz")
+
         val names = mutableListOf<String>()
         bundledSkins.forEach { (name, _) -> names.add("⚡ $name") }
         names.add("🎨 Windows Media Player (Aero)")
@@ -2954,14 +2933,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 when {
                     which < bundledSkins.size -> {
                         val (_, assetPath) = bundledSkins[which]
-                        if (assetPath == "skins/base-2.91.wsz") {
-                            ThemeManager.ensureBundledSkinLoaded(this)
-                            val baseTheme = ThemeManager.bundledSkinColors ?: ThemeColors.WINAMP_CLASSIC
-                            ThemeManager.setAudioPlayerSkin(this, baseTheme, ThemeManager.bundledSkinArtwork, prefKey = AppThemeId.WINAMP_CLASSIC.name)
-                        } else {
-                            ThemeManager.loadBundledSkin(this, assetPath)?.let { parsed ->
-                                ThemeManager.setAudioPlayerSkin(this, parsed.themeColors, parsed.artwork, prefKey = assetPath)
-                            }
+                        ThemeManager.loadBundledSkin(this, assetPath)?.let { parsed ->
+                            ThemeManager.setAudioPlayerSkin(this, parsed.themeColors, parsed.artwork, prefKey = assetPath)
                         }
                     }
                     which == bundledSkins.size -> {
@@ -3968,6 +3941,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     }
 
     override fun onDestroy() {
+        skinAnimationHost?.close(); skinAnimationHost = null
         activePlaylistUiLoad = 0L
         playlistUiLoadStartedAt = 0L
         playlistUiLoadHandler.removeCallbacks(playlistUiElapsedTicker)

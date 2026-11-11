@@ -48,10 +48,26 @@ tasks.withType<Test>().configureEach {
 
 // Real skin and SoundFont fixtures are owned by this application checkout.
 tasks.withType<Test>().configureEach {
-    val skins = projectDir.resolve("src/main/assets/skins")
+    val skins = rootProject.projectDir.resolve("test-assets/skins")
     val banks = rootProject.projectDir.resolve("test-assets/soundfonts")
     inputs.dir(skins)
     inputs.dir(banks)
     systemProperty("infini.media.skins", skins.absolutePath)
     systemProperty("infini.media.soundfonts", banks.absolutePath)
+}
+
+val generatedDefaultTheme = layout.buildDirectory.dir("generated/default-theme/assets")
+val packageDefaultTheme by tasks.registering(Exec::class) {
+    val source = rootProject.layout.projectDirectory.dir("theme")
+    val script = rootProject.layout.projectDirectory.file("scripts/package-default-theme.py")
+    inputs.dir(source)
+    inputs.file(script)
+    outputs.file(generatedDefaultTheme.map { it.file("skins/Infini.wsz") })
+    commandLine("python3", script.asFile, "--source", source.asFile, "--output", generatedDefaultTheme.get().file("skins/Infini.wsz").asFile)
+}
+android.sourceSets.getByName("main").assets.srcDir(generatedDefaultTheme)
+tasks.named("preBuild").configure { dependsOn(packageDefaultTheme) }
+tasks.withType<Test>().configureEach {
+    dependsOn(packageDefaultTheme)
+    systemProperty("infini.media.defaultSkin", generatedDefaultTheme.get().file("skins/Infini.wsz").asFile.absolutePath)
 }
