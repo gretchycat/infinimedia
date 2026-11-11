@@ -45,3 +45,13 @@ tasks.withType<Test>().configureEach {
     val report = layout.buildDirectory.file("reports/audio-playback-authoritative-report.md")
     systemProperty("infini.audio.report", report.get().asFile.absolutePath)
 }
+
+// Real skin and SoundFont fixtures are owned by this application checkout.
+tasks.withType<Test>().configureEach {
+    val skins = projectDir.resolve("src/main/assets/skins")
+    val banks = rootProject.projectDir.resolve("test-assets/soundfonts")
+    inputs.dir(skins)
+    inputs.dir(banks)
+    systemProperty("infini.media.skins", skins.absolutePath)
+    systemProperty("infini.media.soundfonts", banks.absolutePath)
+}

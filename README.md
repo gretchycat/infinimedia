@@ -37,8 +37,8 @@ never requires a sibling application. It refuses to overwrite changed dependency
 checkouts. Run `python3 scripts/fetch-dependencies.py --check` to inspect pins.
 
 For Termux, install its JDK, clang, aapt2, Python, patchelf and libopenmpt packages.
-Set the supported Gradle property `android.aapt2FromMavenOverride` to your installed
-aapt2 executable. The Termux native bridge uses `PREFIX`, not a fixed machine
+The build script configures native aapt2 automatically; direct Gradle calls need
+`android.aapt2FromMavenOverride` set to the installed executable. The Termux native bridge uses `PREFIX`, not a fixed machine
 path. Its native tracker adapter currently targets arm64; other hosts retain the
 existing portable tracker implementation and use the NDK for the other bridges.
 
@@ -49,3 +49,13 @@ See the architecture audit in Infinifolder for executed verification results.
 Extracted from gretchycat/infinifolder's viewer-audio, viewer-video and viewer-host
 sources; the originating repository retains their history. Preserve bundled
 third-party notices and skin/font attribution. See LICENSE.md.
+
+## Build environment discovery
+
+`./build.sh` honors `ANDROID_HOME`, `ANDROID_SDK_ROOT` or this checkout's `local.properties`. With none configured, it discovers an installed SDK in `~/android-sdk`, `~/Android/Sdk` or `~/Library/Android/sdk`, and reports a clear error if absent. It does not install an SDK or write local configuration. On Termux it passes the installed native `aapt2` explicitly and defaults arm64 packaging to `arm64-v8a`; explicit Gradle arguments can override that default. Direct `./gradlew` invocation still requires SDK/tool configuration.
+
+Run `python3 scripts/test-android-build-env.py` for the build entry point's isolated regression checks.
+
+## Owned media assets
+
+All four Winamp skin archives are packaged by `modules/viewer-audio/src/main/assets/skins`; original embedded author readmes are preserved. The optional original SF3 bank and its upstream license/provenance live in [`test-assets/soundfonts`](test-assets/soundfonts/README.md). They are outside production source sets, preserving the existing portable synthesizer/user-import behavior. Media tests require every archive and verify the bank's original hash. No asset fixture is read from Folder or another app.
