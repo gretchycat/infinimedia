@@ -26,8 +26,7 @@ checkout's untracked `local.properties`).
 ```sh
 git clone https://github.com/gretchycat/infinimedia.git
 cd infinimedia
-python3 scripts/fetch-dependencies.py
-./gradlew assembleDebug testDebugUnitTest
+./build.sh --max-workers=1 --console=plain
 ```
 
 The debug APK is `build/outputs/apk/debug/InfiniMedia-debug.apk`. Optionally pass
@@ -59,3 +58,7 @@ Run `python3 scripts/test-android-build-env.py` for the build entry point's isol
 ## Owned media assets
 
 All four Winamp skin archives are packaged by `modules/viewer-audio/src/main/assets/skins`; original embedded author readmes are preserved. The optional original SF3 bank and its upstream license/provenance live in [`test-assets/soundfonts`](test-assets/soundfonts/README.md). They are outside production source sets, preserving the existing portable synthesizer/user-import behavior. Media tests require every archive and verify the bank's original hash. No asset fixture is read from Folder or another app.
+
+## Android verification checkpoint
+
+On 2026-11-11, implementation commit `9f53814` produced its debug APK and passed 76 unit tests in the user's independent Termux checkout. `./build.sh --max-workers=1 --console=plain` ran with SDK environment variables unset and no local.properties, plus a guard rejecting project/source roots outside that checkout. The 11 build-environment regression checks also passed. APK inspection found exactly four Winamp archives, no SF3 bank and no advanced Folder storage implementations. These checks do not establish device UI, grants or playback behavior. Ubuntu testing and other platform ports remain deferred.
