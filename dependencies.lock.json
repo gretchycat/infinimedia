@@ -1,0 +1,37 @@
+{
+  "directory": "libraries",
+  "repositories": {
+    "libinfinicanvas": {
+      "url": "https://github.com/gretchycat/libinfinicanvas.git",
+      "commit": "248c3adf30178c311139a7d5892eef5adc94d030"
+    },
+    "libinfinicore": {
+      "url": "https://github.com/gretchycat/libinfinicore.git",
+      "commit": "1fb1c266ff037c6924571406af814ab638beb464"
+    },
+    "libinfiniscribe": {
+      "url": "https://github.com/gretchycat/libinfiniscribe.git",
+      "commit": "f3a930c9accffd363c05370a2e520856eb760f48"
+    },
+    "libinfiniselect": {
+      "url": "https://github.com/gretchycat/libinfiniselect.git",
+      "commit": "76132898df7c417d4d6b7570d846f1eb54ab2f00"
+    },
+    "libinfinisound": {
+      "url": "https://github.com/gretchycat/libinfinisound.git",
+      "commit": "7a55de8617af185696a91e6b4d3548a6346163f2"
+    },
+    "libinfinistream": {
+      "url": "https://github.com/gretchycat/libinfinistream.git",
+      "commit": "0dcb1b17b0450d900d0581f2fd2c13bf0dd32e4d"
+    },
+    "libinfiniui": {
+      "url": "https://github.com/gretchycat/libinfiniui.git",
+      "commit": "a42f6edb858fb4e939d8970898ff6c5a8a395b20"
+    },
+    "libinfinivideo": {
+      "url": "https://github.com/gretchycat/libinfinivideo.git",
+      "commit": "22d234fd3c525b6d920ff3072f428ca7d2897d0e"
+    }
+  }
+}
