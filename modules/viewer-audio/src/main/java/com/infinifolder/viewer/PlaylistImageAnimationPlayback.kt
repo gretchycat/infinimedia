@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import com.infinifolder.preview.FramePacedBitmapAnimation
 import com.infinifolder.preview.BitmapAnimation
 import java.io.Closeable
 import java.util.concurrent.Executors
@@ -59,6 +60,8 @@ internal class PlaylistImageAnimationPlayback(
             return
         }
         inFlight = true
+        val frameStarted = SystemClock.uptimeMillis()
+        val frameInterval = (animation as? FramePacedBitmapAnimation)?.frameIntervalMillis?.coerceIn(16, 1000) ?: 33L
         val requestGeneration = generation
         val duration = animation.durationNanos
         val elapsed = elapsedNanos().let { if (duration > 0L) it % duration else it }
@@ -91,7 +94,7 @@ internal class PlaylistImageAnimationPlayback(
                     render()
                 } else if (requestGeneration == generation && playing &&
                     (animation.needsContinuousFrames || animation.needsMoreRendering)) {
-                    main.postDelayed(frameTick, 33L)
+                    main.postDelayed(frameTick, (frameInterval - (SystemClock.uptimeMillis() - frameStarted)).coerceAtLeast(1))
                 }
             }
         }

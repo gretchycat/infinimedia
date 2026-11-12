@@ -104,3 +104,20 @@ and its APK (SHA-256 `2165e2594f635273c881cb21e7117bc20aa63058e2c27d1744ac72b9d9
 This supersedes the earlier four-skin packaging checkpoint. Activity appearance,
 touch and video surface composition still need device acceptance. Ubuntu tests
 and other-platform ports remain deferred.
+
+## SVG color-cycling playback
+
+Flat indexed SVG paints are rasterized once at the decoded size. Playback updates
+cached palette-bound pixels, preserving the source palette (including more than
+256 colors) and keeping untagged artwork fixed. This replaces per-frame CSS and
+vector path rendering. The image schedulers count rendering/publication work
+inside the frame interval, so that work is not followed by another full delay.
+Raster setup adds a one-time loading cost. Mixed antialiased/overlapping paints
+can have small color approximation differences; tagged animated gradient stops
+retain the exact vector fallback. The SVG source is unchanged.
+
+`python3 scripts/verify-theme-runtime.py --benchmark` measures decode and warmed
+renderer timing and compares sampled frames against the vector reference. This
+measures CPU rendering, not visible UI frame rate. The normal probe also tests
+all 192 phases in infini.svg, a complete 300-color cycle, duplicate palette IDs,
+opacity, still previews, gradient fallback and both playback scheduler deadlines.
