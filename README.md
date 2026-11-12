@@ -114,3 +114,7 @@ In Android's file-opening resolver, choose Infinimedia and **Always** when offer
 Inside Infinifolder, use **Open with… → Remember in InfiniFolder → All files of this type**, then choose Infinimedia. Those are local preferences, separate from Android defaults. The Folder update migrates saved choices pointing to its removed internal media players; the shared preference update lets explicit type-wide choices supersede old extension defaults.
 
 The runtime probe checks the built APK's binary manifest with Android's own IntentFilter matcher for opaque content IDs and audio/video/playlist MIME types. It also verifies static SVG/SVGZ rendering, unchanged IFF cycling and first-frame pixels, frame assembly, scheduler deadlines and cache lifecycle. It does not automate Android's visible resolver or default-setting UI.
+
+## Static SVG / audio-default verification checkpoint
+
+Implementation f3d7bea passed this repository's build.sh in the independent user checkout: 80 unit tests, 11 environment checks and all three theme packaging tests. All 13 real Android runtime groups passed against APK SHA-256 `a1bad381fe7f40f74cad1f3983b2228227dec88d5ae34daf9b4b5b8154d0fdb6`. They verify static SVG/SVGZ, unchanged IFF cycling, saved-default serialization/precedence, packaged audio intent matching, frame pixels and lifecycle/deadline behavior. Removed SVG cycling classes are absent from the APK. Visible Android chooser/Always interaction remains manual acceptance. This supersedes the earlier SVG playback experiment; no system default was changed by the probe.
