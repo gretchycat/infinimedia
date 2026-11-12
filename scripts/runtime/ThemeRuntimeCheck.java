@@ -46,7 +46,16 @@ public class ThemeRuntimeCheck {
         pass("svg-raster-complete-300-color-rotations");
         BitmapFrame still=CanvasStreams.decodeBytes(source.getBytes(java.nio.charset.StandardCharsets.UTF_8),"still.svg",2048,false);
         check(still.getAnimation()==null && still.getBitmap().getPixel(1,1)==Color.BLACK,"Still-only decode skips playback state");
-        pass("svg-still-preview-skips-raster-animation");
+        for(String name:new String[]{"theme/main.iff","theme/video.bmp"}) {
+            byte[] encoded=bytes(name);
+            BitmapFrame animated=CanvasStreams.decodeBytes(encoded,name,256,true);
+            BitmapFrame preview=CanvasStreams.decodeBytes(encoded,name,256,false);
+            check(animated!=null && preview!=null,"Still/animated format supported: "+name);
+            check(preview.getAnimation()==null && preview.getColorCycling()==null,"Still preview has no animation state: "+name);
+            check(animated.getBitmap().getWidth()==preview.getBitmap().getWidth() && animated.getBitmap().getHeight()==preview.getBitmap().getHeight(),"Still preview dimensions: "+name);
+            check(Arrays.equals(pixels(animated.getBitmap()),pixels(preview.getBitmap())),"Still preview preserves initial pixels: "+name);
+        }
+        pass("still-preview-skips-animation-and-preserves-image-pixels");
         source="<svg xmlns='http://www.w3.org/2000/svg' xmlns:i='https://infinicanvas.org/svg' width='16' height='8'><metadata><i:palette size='4'><i:color index='0' value='#f00'/><i:color index='1' value='#0f0'/><i:color index='2' value='#f00'/><i:color index='3' value='#00f'/></i:palette><i:cycle start='0' end='3' rate='1'/></metadata><rect width='16' height='8' fill='#202020'/><rect width='8' height='8' i:palette-index='0'/><rect x='8' width='8' height='8' opacity='.5' i:palette-index='2'/></svg>";
         frame=decode(source.getBytes(java.nio.charset.StandardCharsets.UTF_8),"duplicate-indices.svg");output=new int[128];
         frame.getAnimation().render(1_000_000_000L,output,true);
