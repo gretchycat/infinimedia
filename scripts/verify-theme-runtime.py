@@ -14,6 +14,7 @@ android = args.sdk/'platforms/android-36/android.jar'
 def compile_jar(path):
     return root/path/'build/intermediates/compile_library_classes_jar/debug/bundleLibCompileToJarDebug/classes.jar'
 jars = [compile_jar(Path('libraries/libinfinicanvas/canvas-android')),
+        compile_jar(Path('libraries/libinfinicore/core-android')),
         compile_jar(Path('libraries/libinfiniui/ui-android')),
         compile_jar(Path('modules/viewer-audio')),
         root/'libraries/libinfinistream/stream-core/build/libs/stream-core-0.1.0.jar',
