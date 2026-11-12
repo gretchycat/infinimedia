@@ -38,7 +38,7 @@ import java.util.concurrent.TimeUnit
 enum class RepeatMode { NONE, ALL, ONE }
 
 /** Media kind is persisted with the URI so a mixed playlist survives process death. */
-enum class PlaylistMediaKind { AUDIO, IMAGE, VIDEO }
+enum class PlaylistMediaKind { AUDIO, ANSI, IMAGE, VIDEO }
 
 data class AudioTrack(
     val uri: Uri,
@@ -219,6 +219,8 @@ class AudioPlayerService : Service() {
         val resource: io.github.gretchycat.infinistream.SourceResource? = null)
     @Volatile var analysisSource: AnalysisSource? = null
         private set
+    @Volatile internal var currentAnsiPresentation: AnsiPlaybackDocument? = null
+        private set
 
     /** Use the active composite PCM Cast source for the same analysis pipeline as local playback. */
     internal fun setCastAnalysisSource(resource: io.github.gretchycat.infinistream.SourceResource?) {
@@ -248,6 +250,7 @@ class AudioPlayerService : Service() {
     private val loadCounter = AtomicLong(0L)
     private val analysisSourceCounter = AtomicLong(0L)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var ansiAdvanceRunnable: Runnable? = null
     private val playlistStore by lazy { AudioPlaylistStore(applicationContext) }
     private val playlistPersistenceLock = Any()
     private val playlistPersistenceExecutor = ScheduledThreadPoolExecutor(1) { runnable ->
@@ -321,10 +324,13 @@ class AudioPlayerService : Service() {
                     if (!PlaylistExpander.isPlaylist(uri, name, mimeType)) {
                         val cur = currentTrack
                         if (cur == null || !uriMatches(cur.uri, uri)) {
-                            val kind = when (MediaTypeDetector.detect(name, mimeType)) {
-                                MediaType.IMAGE -> PlaylistMediaKind.IMAGE
-                                MediaType.VIDEO -> PlaylistMediaKind.VIDEO
-                                else -> PlaylistMediaKind.AUDIO
+                            val kind = when {
+                                AnsiPlaybackSupport.isAnsiFile(name, mimeType) -> PlaylistMediaKind.ANSI
+                                else -> when (MediaTypeDetector.detect(name, mimeType)) {
+                                    MediaType.IMAGE -> PlaylistMediaKind.IMAGE
+                                    MediaType.VIDEO -> PlaylistMediaKind.VIDEO
+                                    else -> PlaylistMediaKind.AUDIO
+                                }
                             }
                             setPlaylist(listOf(AudioTrack(uri, name, fileName = name,
                                 mediaKind = kind, sourceMimeType = mimeType)), 0)
@@ -713,7 +719,12 @@ class AudioPlayerService : Service() {
     }
 
     fun play() {
-        if (currentTrack?.mediaKind != PlaylistMediaKind.AUDIO) return
+        if (currentTrack?.mediaKind !in setOf(PlaylistMediaKind.AUDIO, PlaylistMediaKind.ANSI)) return
+        if (currentTrack?.mediaKind == PlaylistMediaKind.ANSI && ansiAdvanceRunnable != null) {
+            cancelAnsiAdvance()
+            synchronized(playlist) { if (currentIndex in playlist.indices) loadAndPlayCurrent() }
+            return
+        }
         if (com.infinifolder.audio.cast.CastManager.isCasting) { com.infinifolder.audio.cast.CastManager.play(); return }
         if (mediaPlayer == null) {
             synchronized(playlist) { if (currentIndex in playlist.indices) loadAndPlayCurrent() }
@@ -785,6 +796,7 @@ class AudioPlayerService : Service() {
     }
 
     fun stopPlayback() {
+        cancelAnsiAdvance()
         persistPlaylistState(immediate = true)
         loadingThread?.interrupt()
         loadingThread = null
@@ -869,6 +881,7 @@ class AudioPlayerService : Service() {
             RepeatMode.NONE -> (currentIndex until playlist.size).toList()
         }
         indices.map { CastPlaylistSelection(it, playlist[it]) }
+            .filter { it.track.mediaKind == PlaylistMediaKind.AUDIO }
             .filter { !it.track.isUnreadable && castTrackKey(it.track) !in castFailures }
     }
 
@@ -985,11 +998,13 @@ class AudioPlayerService : Service() {
     @Volatile private var currentTrackMetadataThread: Thread? = null
 
     private fun loadAndPlayCurrent() {
+        cancelAnsiAdvance()
         loadingThread?.interrupt()
         currentTrackMetadataThread?.interrupt()
         currentTrackMetadataThread = null
         invalidateGapless()
         val track = currentTrack ?: return
+        currentAnsiPresentation = null
         val thisLoadId = loadCounter.incrementAndGet()
         val resumePosition = restoredPositionFor(track)
         restorePositionTrack = null
@@ -997,7 +1012,7 @@ class AudioPlayerService : Service() {
         persistPlaylistState(positionMs = resumePosition ?: 0)
         analysisSource = null
         notifyAudioSession(0)
-        if (track.mediaKind != PlaylistMediaKind.AUDIO) {
+        if (track.mediaKind != PlaylistMediaKind.AUDIO && track.mediaKind != PlaylistMediaKind.ANSI) {
             stopProgressReporting()
             synchronized(playerLock) {
                 runCatching { currentPcmSource?.close() }
@@ -1020,6 +1035,13 @@ class AudioPlayerService : Service() {
             return
         }
         if (com.infinifolder.audio.cast.CastManager.isCasting || com.infinifolder.audio.cast.CastManager.hasConnectedSession) {
+            if (track.mediaKind == PlaylistMediaKind.ANSI) {
+                isLoading = false
+                notifyTrackChanged(track)
+                notifyPlaybackState(isPlaying = false, isLoading = false)
+                notifyError("ANSI music is played on this device. Disconnect Cast to play this item.")
+                return
+            }
             isLoading = false
             notifyTrackChanged(track)
             com.infinifolder.audio.cast.CastManager.onTrackChanged(track)
@@ -1048,7 +1070,10 @@ class AudioPlayerService : Service() {
             val loadStarted = android.os.SystemClock.elapsedRealtime()
             cacheFailure = null
             val needsLocalRange = track.startByte > 0 || track.lengthBytes > 0 || track.decoderExtension != null
-            val source = try { AudioPlaybackInput.open(this, track.uri, track.fileName, needsLocalRange) } catch (e: Exception) {
+            val source = try {
+                AudioPlaybackInput.open(this, track.uri, track.fileName, needsLocalRange,
+                    metadataOnly = track.mediaKind == PlaylistMediaKind.ANSI)
+            } catch (e: Exception) {
                 if (com.infinifolder.storage.DiskCache.capacityError(e) != null) cacheFailure = e to track.uri
                 null
             }
@@ -1106,6 +1131,16 @@ class AudioPlayerService : Service() {
             var decodedOutput: File? = null
             var pcmSource: com.infinifolder.audio.AudioWaveSource? = null
             try {
+                val ansiPresentation = if (track.mediaKind == PlaylistMediaKind.ANSI) {
+                    AnsiPlaybackSupport.read(source.resource, track.fileName).also { presentation ->
+                        if (loadCounter.get() == thisLoadId) {
+                            currentAnsiPresentation = presentation
+                            mainHandler.post {
+                                if (loadCounter.get() == thisLoadId) notifyTrackChanged(currentTrack)
+                            }
+                        }
+                    }
+                } else null
                 val p = MediaPlayer()
                 player = p
                 p.setAudioAttributes(
@@ -1116,7 +1151,15 @@ class AudioPlayerService : Service() {
                 )
                 val output = File.createTempFile("decoded_stream_", ".wav", cacheDir)
                 decodedOutput = output
-                val waveSource = source.openWaveSource(output, stagedFile, cancelled = { loadCounter.get() != thisLoadId })
+                val waveSource = if (ansiPresentation != null) {
+                    com.infinifolder.audio.AudioProcessing.openWaveSource(
+                        AnsiPlaybackSupport.openPcm(ansiPresentation), output,
+                        com.infinifolder.audio.PcmOutputOptions(sampleRate = 8_000, channels = 1),
+                        cancelled = { loadCounter.get() != thisLoadId }, metadata = source.metadata
+                    )
+                } else {
+                    source.openWaveSource(output, stagedFile, cancelled = { loadCounter.get() != thisLoadId })
+                }
                 if (stagedTempFile == null) stagedTempFile = source.file
                 val decodedAt = android.os.SystemClock.elapsedRealtime()
                 pcmSource = waveSource
@@ -1334,6 +1377,7 @@ class AudioPlayerService : Service() {
     }
 
     private fun readableGaplessNextIndex(): Int? {
+        if (currentTrack?.mediaKind != PlaylistMediaKind.AUDIO) return null
         if (repeatMode == RepeatMode.ONE) return null
         val next = nextReadableTrack(playlist, currentIndex, repeatMode == RepeatMode.ALL) ?: return null
         // A visual item is a real queue stop. Do not let the linked MediaPlayer
@@ -1511,8 +1555,36 @@ class AudioPlayerService : Service() {
 
     /** Called when the current track finishes naturally. */
     private fun onTrackCompleted() {
+        if (currentTrack?.mediaKind == PlaylistMediaKind.ANSI) {
+            if (ansiAdvanceRunnable != null) return
+            val completedLoad = loadCounter.get()
+            val completedTrack = currentTrack
+            val duration = currentDuration.coerceAtLeast(0)
+            stopProgressReporting()
+            notifyProgress(duration, duration)
+            notifyPlaybackState(isPlaying = false, isLoading = false)
+            val advance = object : Runnable {
+                override fun run() {
+                    if (ansiAdvanceRunnable !== this) return
+                    ansiAdvanceRunnable = null
+                    if (loadCounter.get() != completedLoad ||
+                        (completedTrack != null && currentTrack?.let { sameTrack(it, completedTrack) } != true)) return
+                    advanceCompletedTrack()
+                }
+            }
+            ansiAdvanceRunnable = advance
+            mainHandler.postDelayed(advance, AnsiPlaybackSupport.NEXT_ITEM_PAUSE_MS)
+            return
+        }
+        advanceCompletedTrack()
+    }
+
+    private fun advanceCompletedTrack() {
         when (repeatMode) {
-            RepeatMode.ONE -> { seekTo(0); play() }
+            RepeatMode.ONE -> {
+                if (currentTrack?.mediaKind == PlaylistMediaKind.ANSI) loadAndPlayCurrent()
+                else { seekTo(0); play() }
+            }
             RepeatMode.ALL -> playNext()
             RepeatMode.NONE -> {
                 val next = synchronized(playlist) { nextReadableTrack(playlist, currentIndex, false) }
@@ -1525,6 +1597,11 @@ class AudioPlayerService : Service() {
                 }
             }
         }
+    }
+
+    private fun cancelAnsiAdvance() {
+        ansiAdvanceRunnable?.let(mainHandler::removeCallbacks)
+        ansiAdvanceRunnable = null
     }
 
     private fun decodeSampledBitmap(data: ByteArray, reqWidth: Int, reqHeight: Int): Bitmap? {

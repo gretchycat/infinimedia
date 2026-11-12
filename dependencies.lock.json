@@ -19,7 +19,7 @@
     },
     "libinfinisound": {
       "url": "https://github.com/gretchycat/libinfinisound.git",
-      "commit": "14b482e314a661ebdbc346d111884b874bc42adf"
+      "commit": "4f9febc18ab673d92556cf69173bb1432d7e91ee"
     },
     "libinfinistream": {
       "url": "https://github.com/gretchycat/libinfinistream.git",

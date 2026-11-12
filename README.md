@@ -11,6 +11,17 @@ not include Infinifolder's remote clients, torrent engine or virtual filesystem
 implementation. The small shared UI and resource-support libraries adapt content
 URIs without depending on another application's source.
 
+## ANSI art and ANSI Music
+
+`.ans` and `.ansi` files can be queued alongside audio, images and video. InfiniMedia
+detects UTF-8 versus CP437, interprets ANSI terminal control and color sequences in
+an 80-column display, and draws the output in the visual-media pane. Long output
+scrolls at 9600 baud (8N1 timing). Embedded ANSI Music commands use libinfinisound's
+PC-speaker synthesizer and play through the end; the finished frame remains visible
+if the tune outlasts the text. The playlist waits two seconds after an ANSI item
+finishes before starting the next item. ANSI Music is played locally; disconnect
+Cast before starting an ANSI item.
+
 ## Build script
 
 `./build.sh` builds the debug APK and runs the application's JVM unit tests.
@@ -62,6 +73,8 @@ Infinimedia Default is the sole packaged skin, generated reproducibly from `them
 ## Android verification checkpoint
 
 On 2026-11-11, implementation commit `9f53814` produced its debug APK and passed 76 unit tests in the user's independent Termux checkout. `./build.sh --max-workers=1 --console=plain` ran with SDK environment variables unset and no local.properties, plus a guard rejecting project/source roots outside that checkout. The 11 build-environment regression checks also passed. APK inspection found exactly four Winamp archives, no SF3 bank and no advanced Folder storage implementations. These checks do not establish device UI, grants or playback behavior. Ubuntu testing and other platform ports remain deferred.
+
+The ANSI and ANSI Music implementation also built on 2026-11-11 and passed all 86 JVM unit tests. The generated and packaged Android intent filters include `.ans` and `.ansi`; the debug APK is 70 MiB. No device playback or UI test was run, so audio output, terminal rendering and playlist timing still need runtime validation.
 
 ## Infinimedia Default theme
 

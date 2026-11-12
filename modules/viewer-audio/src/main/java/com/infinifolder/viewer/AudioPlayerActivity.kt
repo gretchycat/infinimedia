@@ -143,6 +143,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private lateinit var artCard: FrameLayout
     private lateinit var albumArtView: ImageView
+    private lateinit var ansiTerminalView: AnsiTerminalView
+    private lateinit var visualPaneMetadata: LinearLayout
     private lateinit var visualPaneTitleText: TextView
     private lateinit var visualPaneDetailsText: TextView
     private lateinit var visualPaneVisualizerView: VisualizerView
@@ -512,10 +514,12 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             if (includeAudio) add("audio/*")
             if (includeVideo) add("video/*")
             if (includeImage) add("image/*")
+            if (includeAudio || includeImage) addAll(AnsiPlaybackSupport.mimeTypes)
         }
         val mimes = (categoryMimes + formats.flatMap { it.mimeTypes })
             .filter { it.isNotBlank() && it != "*/*" }.distinct().sorted()
-        val extensions = formats.flatMap { it.extensions }
+        val ansiExtensions = if (includeAudio || includeImage) AnsiPlaybackSupport.extensions else emptySet()
+        val extensions = (formats.flatMap { it.extensions } + ansiExtensions)
             .map { it.removePrefix(".").lowercase(Locale.ROOT) }.filter(String::isNotBlank).distinct().sorted()
         InfiniSelect.open(this, OpenRequest(
             clientId = "infinimedia",
@@ -794,10 +798,13 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                                 "audio.playlist.prepare.playlist-expanded",
                                 "name=${item.name} added=${tracks.size - before} elapsedMs=$expansionElapsedMs")
                         } else {
-                            val kind = when (MediaTypeDetector.detect(item.name, item.mimeType)) {
-                                MediaType.IMAGE -> PlaylistMediaKind.IMAGE
-                                MediaType.VIDEO -> PlaylistMediaKind.VIDEO
-                                else -> PlaylistMediaKind.AUDIO
+                            val kind = when {
+                                AnsiPlaybackSupport.isAnsiFile(item.name, item.mimeType) -> PlaylistMediaKind.ANSI
+                                else -> when (MediaTypeDetector.detect(item.name, item.mimeType)) {
+                                    MediaType.IMAGE -> PlaylistMediaKind.IMAGE
+                                    MediaType.VIDEO -> PlaylistMediaKind.VIDEO
+                                    else -> PlaylistMediaKind.AUDIO
+                                }
                             }
                             tracks += AudioTrack(uri = item.uri, title = item.name, fileName = item.name,
                                 directoryUri = item.directoryUri, directoryName = item.directoryName,
@@ -1229,6 +1236,12 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             clipToOutline = true
         }
 
+        ansiTerminalView = AnsiTerminalView(this).apply {
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(-1, -1)
+        }
+        artCard.addView(ansiTerminalView)
+
         albumArtView = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
             layoutParams = FrameLayout.LayoutParams(-1, -1)
@@ -1238,7 +1251,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
         // The lower-third background hugs its text; it does not paint a band
         // across the visualization window. The spectrum remains a separate overlay.
-        val visualMetadata = LinearLayout(this).apply {
+        visualPaneMetadata = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(9), dp(6), dp(9), dp(6))
@@ -1255,7 +1268,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
-        visualMetadata.addView(visualPaneTitleText, LinearLayout.LayoutParams(-2, -2))
+        visualPaneMetadata.addView(visualPaneTitleText, LinearLayout.LayoutParams(-2, -2))
         visualPaneDetailsText = TextView(this).apply {
             text = ""
             textSize = 10f
@@ -1264,8 +1277,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
-        visualMetadata.addView(visualPaneDetailsText, LinearLayout.LayoutParams(-2, -2))
-        artCard.addView(visualMetadata, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply {
+        visualPaneMetadata.addView(visualPaneDetailsText, LinearLayout.LayoutParams(-2, -2))
+        artCard.addView(visualPaneMetadata, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply {
             leftMargin = dp(8)
             bottomMargin = dp(8)
         })
@@ -2026,6 +2039,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                             "${track.artist} - ${track.title}"
                         } else track.title
                         val mediaPrefix = when (track.mediaKind) {
+                            PlaylistMediaKind.ANSI -> "[ANSI] "
                             PlaylistMediaKind.IMAGE -> "[IMAGE] "
                             PlaylistMediaKind.VIDEO -> "[VIDEO] "
                             PlaylistMediaKind.AUDIO -> ""
@@ -2121,6 +2135,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                             "${track.artist} - ${track.title}"
                         } else track.title
                         val mediaPrefix = when (track.mediaKind) {
+                            PlaylistMediaKind.ANSI -> "[ANSI] "
                             PlaylistMediaKind.IMAGE -> "[IMAGE] "
                             PlaylistMediaKind.VIDEO -> "[VIDEO] "
                             PlaylistMediaKind.AUDIO -> ""
@@ -2881,6 +2896,10 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 visualVideoPlaying = false
             }
             PlaylistMediaKind.IMAGE -> visualImageAdvanceHandler.removeCallbacks(visualImageAdvanceRunnable)
+            PlaylistMediaKind.ANSI -> {
+                service?.let { it.pause(); it.seekTo(0) }
+                ansiTerminalView.resetOutput()
+            }
             else -> {
                 if (CastManager.isCasting) {
                     CastManager.seek(0)
@@ -3107,6 +3126,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val track = service.currentTrack
         updateTrackView(track)
         val isPlaying = if (CastManager.isCasting) CastManager.isRemotePlaying else service.isPlaying
+        ansiTerminalView.setPlaying(track?.mediaKind == PlaylistMediaKind.ANSI && service.isPlaying)
         updateProgressAnimation(isPlaying)
         updatePlayPauseButton(isPlaying)
         loadingIndicator.visibility = if (service.isLoading) View.VISIBLE else View.GONE
@@ -3238,7 +3258,26 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
         val generation = visualLoadGeneration.get()
         when (track.mediaKind) {
+            PlaylistMediaKind.ANSI -> {
+                albumArtView.visibility = View.GONE
+                ansiTerminalView.visibility = View.VISIBLE
+                visualPaneMetadata.visibility = View.GONE
+                visualPaneVisualizerView.visibility = View.GONE
+                val service = AudioPlayerService.currentService
+                val presentation = service?.currentAnsiPresentation
+                ansiTerminalView.setDocument(presentation?.terminal)
+                ansiTerminalView.setPlaying(service?.isPlaying == true)
+                ansiTerminalView.setPlaybackPosition(service?.currentPosition?.toLong() ?: 0L)
+                visualPaneDetailsText.text = buildString {
+                    append(presentation?.encoding ?: "ANSI")
+                    append(" · 80 columns · 9600 baud")
+                    if (presentation?.terminal?.music?.isNotEmpty() == true) append(" · ANSI Music")
+                }
+            }
             PlaylistMediaKind.IMAGE -> {
+                ansiTerminalView.visibility = View.GONE
+                visualPaneMetadata.visibility = View.VISIBLE
+                albumArtView.visibility = View.VISIBLE
                 visualPaneDetailsText.text = metadataDetails.ifBlank {
                     "IMAGE  ${track.sourceMimeType ?: com.infinifolder.mime.MimeRegistry.guess(track.fileName)}"
                 }
@@ -3246,11 +3285,17 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 if (changedVisual) loadPlaylistImage(track, generation)
             }
             PlaylistMediaKind.VIDEO -> {
+                ansiTerminalView.visibility = View.GONE
+                visualPaneMetadata.visibility = View.VISIBLE
+                albumArtView.visibility = View.VISIBLE
                 visualPaneDetailsText.text = metadataDetails.ifBlank { "VIDEO" }
                 visualizerPaneVisualizerVisibility(false)
                 if (changedVisual) loadPlaylistVideo(track, generation)
             }
             PlaylistMediaKind.AUDIO -> {
+                ansiTerminalView.visibility = View.GONE
+                visualPaneMetadata.visibility = View.VISIBLE
+                albumArtView.visibility = View.VISIBLE
                 visualPaneDetailsText.text = metadataDetails
                 visualizerPaneVisualizerVisibility(true)
                 if (changedVisual || albumArtView.visibility != View.VISIBLE) {
@@ -3763,6 +3808,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     override fun onPlaybackStateChanged(isPlaying: Boolean, isLoading: Boolean) {
         runOnUiThread {
             val effectivePlaying = if (CastManager.isCasting) CastManager.isRemotePlaying else isPlaying || visualVideoPlaying
+            ansiTerminalView.setPlaying(isPlaying &&
+                AudioPlayerService.currentService?.currentTrack?.mediaKind == PlaylistMediaKind.ANSI)
             updateProgressAnimation(effectivePlaying)
             if (effectivePlaying && !CastManager.isCasting) updateVisualizerCapture(AudioPlayerService.currentService?.audioSessionId ?: 0)
             updatePlayPauseButton(effectivePlaying)

@@ -92,6 +92,8 @@ class PlaylistExpanderTest {
         assertTrue("The audio viewer must inherit playlist formats from Sound",
             audioViewer.describe().formats.any { "xspf" in it.extensions } &&
                 audioViewer.describe().formats.any { "jspf" in it.extensions })
+        assertTrue("The audio viewer must advertise ANSI files for Android Open with filters",
+            audioViewer.describe().formats.any { setOf("ans", "ansi").all(it.extensions::contains) })
         assertEquals(MediaType.AUDIO, MediaTypeDetector.detect("c_major_piano.xspf", "application/xspf+xml"))
     }
 

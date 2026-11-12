@@ -308,12 +308,15 @@ object PlaylistExpander {
                     val declaredKind = entry.mediaKind?.uppercase()?.let {
                         runCatching { PlaylistMediaKind.valueOf(it) }.getOrNull()
                     }
-                    val mediaKind = if (entry.decoderExtension != null || entry.startByte > 0 || entry.lengthBytes >= 0) {
-                        PlaylistMediaKind.AUDIO
-                    } else declaredKind ?: when (MediaTypeDetector.detect(itemName, entry.mimeType)) {
-                        MediaType.IMAGE -> PlaylistMediaKind.IMAGE
-                        MediaType.VIDEO -> PlaylistMediaKind.VIDEO
-                        else -> PlaylistMediaKind.AUDIO
+                    val mediaKind = when {
+                        entry.decoderExtension != null || entry.startByte > 0 || entry.lengthBytes >= 0 -> PlaylistMediaKind.AUDIO
+                        AnsiPlaybackSupport.isAnsiFile(itemName, entry.mimeType) -> PlaylistMediaKind.ANSI
+                        declaredKind != null -> declaredKind
+                        else -> when (MediaTypeDetector.detect(itemName, entry.mimeType)) {
+                            MediaType.IMAGE -> PlaylistMediaKind.IMAGE
+                            MediaType.VIDEO -> PlaylistMediaKind.VIDEO
+                            else -> PlaylistMediaKind.AUDIO
+                        }
                     }
                     tracks.add(
                         AudioTrack(
@@ -413,8 +416,14 @@ object PlaylistExpander {
                 tracks.addAll(playlistTracks)
             } else {
                 val type = MediaTypeDetector.detect(entry.metadata.name, entry.metadata.mimeType)
-                if (type == MediaType.AUDIO || (queueMultimedia && type == MediaType.VIDEO)) {
-                    tracks.add(AudioTrack(entry.uri, entry.metadata.name))
+                val ansi = AnsiPlaybackSupport.isAnsiFile(entry.metadata.name, entry.metadata.mimeType)
+                if (ansi || type == MediaType.AUDIO || (queueMultimedia && type == MediaType.VIDEO)) {
+                    val kind = if (ansi) PlaylistMediaKind.ANSI else when (type) {
+                        MediaType.VIDEO -> PlaylistMediaKind.VIDEO
+                        else -> PlaylistMediaKind.AUDIO
+                    }
+                    tracks.add(AudioTrack(entry.uri, entry.metadata.name, fileName = entry.metadata.name,
+                        mediaKind = kind, sourceMimeType = entry.metadata.mimeType))
                 }
             }
         }
