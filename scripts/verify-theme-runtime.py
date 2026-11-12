@@ -8,9 +8,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--apk', type=Path, default=root/'build/outputs/apk/debug/InfiniMedia-debug.apk')
 parser.add_argument('--sdk', type=Path, default=Path(os.environ.get('ANDROID_HOME', Path.home()/'android-sdk')))
 parser.add_argument('--output', type=Path, default=root/'build/theme-runtime')
-parser.add_argument('--benchmark', action='store_true')
 parser.add_argument('--decoder-only', action='store_true', help='Skip host playback scheduler/lifecycle checks')
-parser.add_argument('--canvas-override', type=Path, help='Development only: prepend a built Canvas classes.jar to the APK runtime')
 args = parser.parse_args()
 android = args.sdk/'platforms/android-36/android.jar'
 def compile_jar(path):
@@ -37,13 +35,7 @@ with tempfile.TemporaryDirectory(prefix='infini-theme-runtime-') as directory:
     (dex/'classes.dex').chmod(0o444)
     apk=work/'runtime.apk';shutil.copyfile(args.apk,apk);apk.chmod(0o444)
     env=os.environ.copy();env.pop('LD_PRELOAD',None);env.pop('LD_LIBRARY_PATH',None)
-    extra=[]
-    if args.canvas_override:
-        override=work/'canvas';override.mkdir()
-        subprocess.run([str(args.sdk/'build-tools/35.0.0/d8'),'--min-api','26','--lib',str(android),
-                        *[item for jar in jars for item in ('--classpath',str(jar))],
-                        '--output',str(override),str(args.canvas_override)],check=True)
-        (override/'classes.dex').chmod(0o444);extra=[str(override/'classes.dex')]
-    env['CLASSPATH']=os.pathsep.join([str(dex/'classes.dex'),*extra,str(apk)])
-    subprocess.run(['/system/bin/app_process64','/system/bin','ThemeRuntimeCheck',str(root),str(args.output.resolve()),*(['benchmark'] if args.benchmark else ['decoder'] if args.decoder_only else [])],env=env,check=True,timeout=120)
+    env['CLASSPATH']=os.pathsep.join([str(dex/'classes.dex'),str(apk)])
+    env['INFINI_TEST_APK']=str(apk)
+    subprocess.run(['/system/bin/app_process64','/system/bin','ThemeRuntimeCheck',str(root),str(args.output.resolve()),*(['decoder'] if args.decoder_only else [])],env=env,check=True,timeout=120)
 print('APK SHA-256:',hashlib.sha256(args.apk.read_bytes()).hexdigest())

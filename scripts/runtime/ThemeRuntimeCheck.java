@@ -32,78 +32,39 @@ public class ThemeRuntimeCheck {
             "<i:palette id='p' size='"+size+"'>"+colors+"</i:palette><i:cycle palette='p' start='0' end='"+(size-1)+"' rate='1' direction='"+(reverse?"reverse":"forward")+"'/></metadata>"+
             "<rect width='8' height='8' fill='#f00' i:palette-index='0'/><rect x='8' width='8' height='8' fill='#f00'/></svg>").getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
-    static void svgRegressionChecks() throws Exception {
-        StringBuilder colors=new StringBuilder();int count=300;
-        for(int i=0;i<count;i++)colors.append("<i:color index='"+i+"' value='"+String.format(java.util.Locale.ROOT,"#%06x",i*0x010203&0xffffff)+"'/>");
-        String source="<svg xmlns='http://www.w3.org/2000/svg' xmlns:i='https://infinicanvas.org/svg' width='4' height='4'><metadata><i:palette id='p' size='300'>"+colors+"</i:palette><i:cycle start='0' end='299' rate='24'/></metadata><rect width='4' height='4' i:palette-index='0'/></svg>";
-        BitmapFrame frame=decode(source.getBytes(java.nio.charset.StandardCharsets.UTF_8),"complete-cycle.svg");
-        check(frame.getAnimation().getDescription().startsWith("Rasterized"),"Flat indexed SVG uses raster playback");
-        int[] output=new int[16];
-        for(int step=0;step<=600;step++){
-            frame.getAnimation().render((long)Math.ceil(step*1e9/24.0),output,true);
-            check(output[5]==(0xff000000 | Math.floorMod(-step,count)*0x010203&0xffffff),"Complete forward cycle step "+step);
+    static void svgStillChecks() throws Exception {
+        for(boolean reverse:new boolean[]{false,true}) {
+            BitmapFrame frame=decode(svg(reverse,300),"metadata.svg");
+            check(frame.getAnimation()==null && frame.getColorCycling()==null,"SVG cycling metadata ignored");
+            check(frame.getBitmap().getWidth()==16 && frame.getBitmap().getHeight()==8,"SVG intrinsic dimensions");
+            check(frame.getBitmap().getPixel(3,3)==Color.RED,"Explicit static SVG paint retained");
+            ByteArrayOutputStream compressed=new ByteArrayOutputStream();
+            try(java.util.zip.GZIPOutputStream stream=new java.util.zip.GZIPOutputStream(compressed)){stream.write(svg(reverse,300));}
+            BitmapFrame zipped=decode(compressed.toByteArray(),"still.svgz");
+            check(zipped.getAnimation()==null && Arrays.equals(pixels(frame.getBitmap()),pixels(zipped.getBitmap())),"SVGZ remains static with identical pixels");
         }
-        pass("svg-raster-complete-300-color-rotations");
-        BitmapFrame still=CanvasStreams.decodeBytes(source.getBytes(java.nio.charset.StandardCharsets.UTF_8),"still.svg",2048,false);
-        check(still.getAnimation()==null && still.getBitmap().getPixel(1,1)==Color.BLACK,"Still-only decode skips playback state");
+        pass("svg-and-svgz-ignore-cycling-metadata");
+        String source="<svg xmlns='http://www.w3.org/2000/svg' width='40' height='20' viewBox='0 0 10 10'><rect width='10' height='10' fill='#0f0'/></svg>";
+        BitmapFrame nativeSize=decode(source.getBytes(java.nio.charset.StandardCharsets.UTF_8),"dimensions.svg");
+        check(nativeSize.getBitmap().getWidth()==40 && nativeSize.getBitmap().getHeight()==20,"Document dimensions take precedence over viewBox for sprites");
+        check(Color.alpha(nativeSize.getBitmap().getPixel(0,10))==0 && nativeSize.getBitmap().getPixel(20,10)==Color.GREEN,"Aspect ratio retained with letterboxing");
+        pass("static-svg-document-dimensions-and-aspect-ratio");
+        BitmapFrame supplied=decode(bytes("infini.svg"),"infini.svg");
+        check(supplied.getAnimation()==null && supplied.getColorCycling()==null,"User SVG remains a still image");
+        check(supplied.getBitmap().getWidth()==1800 && supplied.getBitmap().getHeight()==900,"User SVG canvas dimensions retained");
+        png(supplied.getBitmap(),"infini-svg-static.png");pass("supplied-svg-static-render");
         for(String name:new String[]{"theme/main.iff","theme/video.bmp"}) {
             byte[] encoded=bytes(name);
             BitmapFrame animated=CanvasStreams.decodeBytes(encoded,name,256,true);
             BitmapFrame preview=CanvasStreams.decodeBytes(encoded,name,256,false);
             check(animated!=null && preview!=null,"Still/animated format supported: "+name);
             check(preview.getAnimation()==null && preview.getColorCycling()==null,"Still preview has no animation state: "+name);
-            check(animated.getBitmap().getWidth()==preview.getBitmap().getWidth() && animated.getBitmap().getHeight()==preview.getBitmap().getHeight(),"Still preview dimensions: "+name);
             check(Arrays.equals(pixels(animated.getBitmap()),pixels(preview.getBitmap())),"Still preview preserves initial pixels: "+name);
         }
-        pass("still-preview-skips-animation-and-preserves-image-pixels");
-        source="<svg xmlns='http://www.w3.org/2000/svg' xmlns:i='https://infinicanvas.org/svg' width='16' height='8'><metadata><i:palette size='4'><i:color index='0' value='#f00'/><i:color index='1' value='#0f0'/><i:color index='2' value='#f00'/><i:color index='3' value='#00f'/></i:palette><i:cycle start='0' end='3' rate='1'/></metadata><rect width='16' height='8' fill='#202020'/><rect width='8' height='8' i:palette-index='0'/><rect x='8' width='8' height='8' opacity='.5' i:palette-index='2'/></svg>";
-        frame=decode(source.getBytes(java.nio.charset.StandardCharsets.UTF_8),"duplicate-indices.svg");output=new int[128];
-        frame.getAnimation().render(1_000_000_000L,output,true);
-        check(output[3+3*16]==Color.BLUE,"First red index rotates to blue");
-        int mixed=output[12+3*16];check(Color.green(mixed)>140 && Color.red(mixed)<20 && Color.blue(mixed)<20,"Second red index rotates to green with opacity");
-        pass("svg-raster-duplicate-indices-and-opacity");
-        source="<svg xmlns='http://www.w3.org/2000/svg' xmlns:i='https://infinicanvas.org/svg' width='16' height='8'><metadata><i:palette size='2'><i:color index='0' value='#f00'/><i:color index='1' value='#00f'/></i:palette><i:cycle start='0' end='1' rate='1'/></metadata><defs><linearGradient id='g'><stop offset='0' i:palette-index='0'/><stop offset='1' i:palette-index='1'/></linearGradient></defs><rect width='16' height='8' fill='url(#g)'/></svg>";
-        frame=decode(source.getBytes(java.nio.charset.StandardCharsets.UTF_8),"gradient.svg");
-        check(!frame.getAnimation().getDescription().startsWith("Rasterized"),"Animated gradient retains vector fallback");
-        int initial=frame.getBitmap().getPixel(2,3);output=new int[128];frame.getAnimation().render(1_000_000_000L,output,true);
-        check(output[2+3*16]!=initial,"Animated gradient still changes");pass("svg-animated-gradient-fallback");
-        frame=decode(bytes("infini.svg"),"infini.svg");
-        check(frame.getAnimation().getDescription().startsWith("Rasterized"),"Supplied complex SVG uses raster playback");
-        int[] initialPixels=pixels(frame.getBitmap());output=initialPixels.clone();
-        SvgPaletteCycling.Definition d=SvgPaletteCycling.INSTANCE.parse(bytes("infini.svg"));
-        frame.getAnimation().render((long)Math.ceil(1e9/d.getCycles().get(0).getRate()),output,true);
-        int sample=-1;
-        for(int i=0;i<output.length;i++)if(initialPixels[i]==d.getPalette()[64] && output[i]==d.getPalette()[255]){sample=i;break;}
-        check(sample>=0,"Pure indexed source pixel located");
-        for(int step=0;step<192;step++){
-            frame.getAnimation().render((long)Math.ceil(step*1e9/d.getCycles().get(0).getRate()),output,true);
-            check(output[sample]==d.getPalette()[64+Math.floorMod(-step,192)],"Supplied SVG phase "+step);
-        }
-        pass("supplied-svg-all-192-palette-phases");
+        pass("still-preview-preserves-iff-and-bmp-pixels");
     }
-
     static void rasterChecks() throws Exception {
-        for (boolean reverse : new boolean[]{false,true}) {
-            BitmapFrame f=decode(svg(reverse,3),"cycling.svg");
-            check(f.getBitmap().getWidth()==16 && f.getBitmap().getHeight()==8,"SVG intrinsic dimensions");
-            check(f.getBitmap().getPixel(3,3)==Color.RED,"Indexed initial paint");
-            BitmapAnimation animation=f.getAnimation();check(animation!=null,"SVG animation available");
-            int[] p=new int[128];animation.render(1_000_000_000L,p,true);
-            check(p[3+3*16]==(reverse?Color.GREEN:Color.BLUE),"SVG cycle direction");
-            check(p[12+3*16]==Color.RED,"Untagged equal-RGB paint remains fixed");
-            check(!animation.render(1_000_000_000L,p,false),"Unchanged SVG frame skipped");
-        }
-        pass("svg-indexed-paint-direction-and-static-paint");
-        BitmapFrame large=decode(svg(false,300),"palette.svg");
-        check(large.getAnimation()!=null,"Palette above 256 colors is retained");
-        pass("svg-palette-above-256");
-        BitmapFrame supplied=decode(bytes("infini.svg"),"infini.svg");
-        check(supplied.getAnimation()!=null,"Supplied SVG metadata animated");
-        int[] before=pixels(supplied.getBitmap()),after=before.clone();
-        supplied.getAnimation().render(150_000_000L,after,true);
-        check(!Arrays.equals(before,after),"Supplied SVG pixels cycle");
-        png(supplied.getBitmap(),"infini-svg-initial.png");
-        pass("supplied-infini-svg-raster");
+        int[] before,after;
         BitmapFrame iff=decode(bytes("theme/main.iff"),"main.iff");
         check(iff.getBitmap().getWidth()==275 && iff.getBitmap().getHeight()==116,"Corrected IFF canvas");
         before=pixels(iff.getBitmap());for(int p:before)check(Color.alpha(p)==255,"Corrected full faceplate is opaque");
@@ -143,19 +104,18 @@ public class ThemeRuntimeCheck {
     static void later(Handler handler,long delay,Runnable action) {
         handler.postDelayed(()->{try{action.run();}catch(Throwable e){e.printStackTrace();System.exit(1);}},delay);
     }
-    static class SlowFrame implements FramePacedBitmapAnimation {
+    static class SlowFrame implements BitmapAnimation {
         final List<Long> starts=Collections.synchronizedList(new ArrayList<>());
         public int getWidth(){return 1;} public int getHeight(){return 1;}
         public long getDurationNanos(){return 0;} public boolean getNeedsMoreRendering(){return false;}
         public boolean getNeedsContinuousFrames(){return true;} public String getDescription(){return "pacing-test";}
-        public long getFrameIntervalMillis(){return 20;}
-        public boolean render(long time,int[] output,boolean force){starts.add(SystemClock.uptimeMillis());SystemClock.sleep(12);output[0]=Color.RED;return true;}
+        public boolean render(long time,int[] output,boolean force){starts.add(SystemClock.uptimeMillis());SystemClock.sleep(20);output[0]=Color.RED;return true;}
         void verify(String name){
             List<Long> times; synchronized(starts){times=new ArrayList<>(starts);}
             check(times.size()>=5,"Pacing probe received frames: "+name);
             long[] gaps=new long[times.size()-1];for(int i=1;i<times.size();i++)gaps[i-1]=times.get(i)-times.get(i-1);
             Arrays.sort(gaps);System.out.println("PACING "+name+" median_interval_ms="+gaps[gaps.length/2]);
-            check(gaps[gaps.length/2]<40,"Renderer time must count toward the frame deadline: "+name);pass(name);
+            check(gaps[gaps.length/2]<48,"Renderer time must count toward the frame deadline: "+name);pass(name);
         }
     }
     static void pacingChecks(Runnable done) {
@@ -168,8 +128,8 @@ public class ThemeRuntimeCheck {
         });
     }
     static void lifecycleChecks() throws Exception {
-        final byte[] svg=bytes("infini.svg");final int[] changed={0};
-        SkinImageCache cache=new SkinImageCache(name->Collections.singletonList(new Pair<>("main.svg",svg)),()->{changed[0]++;return Unit.INSTANCE;});
+        final byte[] iff=bytes("theme/main.iff");final int[] changed={0};
+        SkinImageCache cache=new SkinImageCache(name->Collections.singletonList(new Pair<>("main.iff",iff)),()->{changed[0]++;return Unit.INSTANCE;});
         Bitmap image=cache.bitmap("main.bmp");check(image!=null,"Cache image decoded");
         check(image==cache.bitmap("main.iff"),"Logical role shares cache");
         cache.setPlaying(true);Handler main=new Handler(Looper.getMainLooper());
@@ -188,6 +148,95 @@ public class ThemeRuntimeCheck {
             });
         });
     }
+    static void audioIntentChecks() throws Exception {
+        android.content.res.AssetManager assets=android.content.res.AssetManager.class.getDeclaredConstructor().newInstance();
+        int cookie=(Integer)assets.getClass().getDeclaredMethod("addAssetPath",String.class).invoke(assets,System.getenv("INFINI_TEST_APK"));
+        check(cookie!=0,"APK assets loaded");
+        List<android.content.IntentFilter> filters=new ArrayList<>();
+        try(android.content.res.XmlResourceParser parser=assets.openXmlResourceParser(cookie,"AndroidManifest.xml")) {
+            boolean mediaActivity=false;
+            android.content.IntentFilter current=null;
+            String ns="http://schemas.android.com/apk/res/android";
+            for(int event=parser.getEventType();event!=org.xmlpull.v1.XmlPullParser.END_DOCUMENT;event=parser.next()) {
+                String tag=parser.getName();
+                if(event==org.xmlpull.v1.XmlPullParser.START_TAG && "activity".equals(tag))
+                    mediaActivity="com.infinimedia.InfiniMediaActivity".equals(parser.getAttributeValue(ns,"name"));
+                else if(event==org.xmlpull.v1.XmlPullParser.END_TAG && "activity".equals(tag)) mediaActivity=false;
+                else if(mediaActivity && event==org.xmlpull.v1.XmlPullParser.START_TAG && "intent-filter".equals(tag)) current=new android.content.IntentFilter();
+                else if(current!=null && event==org.xmlpull.v1.XmlPullParser.START_TAG) {
+                    String name=parser.getAttributeValue(ns,"name");
+                    if("action".equals(tag)) current.addAction(name);
+                    else if("category".equals(tag)) current.addCategory(name);
+                    else if("data".equals(tag)) {
+                        String type=parser.getAttributeValue(ns,"mimeType"),scheme=parser.getAttributeValue(ns,"scheme"),host=parser.getAttributeValue(ns,"host");
+                        if(type!=null)current.addDataType(type);
+                        if(scheme!=null)current.addDataScheme(scheme);
+                        if(host!=null)current.addDataAuthority(host,parser.getAttributeValue(ns,"port"));
+                        for(String attr:new String[]{"path","pathPrefix","pathPattern","pathSuffix"}) {
+                            String path=parser.getAttributeValue(ns,attr);
+                            if(path!=null)current.addDataPath(path,attr.equals("path")?android.os.PatternMatcher.PATTERN_LITERAL:attr.equals("pathPrefix")?android.os.PatternMatcher.PATTERN_PREFIX:attr.equals("pathSuffix")?android.os.PatternMatcher.PATTERN_SUFFIX:android.os.PatternMatcher.PATTERN_SIMPLE_GLOB);
+                        }
+                    }
+                } else if(current!=null && event==org.xmlpull.v1.XmlPullParser.END_TAG && "intent-filter".equals(tag)) {filters.add(current);current=null;}
+            }
+        }
+        for(String scheme:new String[]{"content","file"})for(String type:new String[]{"audio/mpeg","audio/flac","audio/ogg","audio/x-wav","audio/vendor-unknown","video/mp4","application/jspf+json"}) {
+            android.net.Uri uri=android.net.Uri.parse(scheme+"://provider/document/opaque-id");
+            boolean matched=false;
+            for(android.content.IntentFilter filter:filters) {
+                if(filter.match("android.intent.action.VIEW",type,scheme,uri,Collections.singleton("android.intent.category.DEFAULT"),"InfiniTest")>=0) matched=true;
+            }
+            check(matched,"Default-capable playback intent matches "+scheme+" "+type);
+        }
+        pass("packaged-audio-video-playlist-default-intent-matching");
+        check(!filters.isEmpty(),"Playback filters are present");assets.close();
+    }
+    /** Exercise real SharedPreferences JSON and ComponentName logic without altering app data. */
+    static void defaultPreferenceChecks() {
+        Map<String,String> stored=new HashMap<>();
+        final android.content.SharedPreferences.Editor[] editor={null};
+        editor[0]=(android.content.SharedPreferences.Editor)java.lang.reflect.Proxy.newProxyInstance(
+            ThemeRuntimeCheck.class.getClassLoader(),new Class<?>[]{android.content.SharedPreferences.Editor.class},(proxy,method,args)->{
+                switch(method.getName()) {
+                    case "putString": stored.put((String)args[0],(String)args[1]);return editor[0];
+                    case "remove": stored.remove((String)args[0]);return editor[0];
+                    case "clear": stored.clear();return editor[0];
+                    case "commit": return true;
+                    case "apply": return null;
+                    default: throw new UnsupportedOperationException(method.getName());
+                }
+            });
+        android.content.SharedPreferences prefs=(android.content.SharedPreferences)java.lang.reflect.Proxy.newProxyInstance(
+            ThemeRuntimeCheck.class.getClassLoader(),new Class<?>[]{android.content.SharedPreferences.class},(proxy,method,args)->{
+                switch(method.getName()) {
+                    case "getString": return stored.getOrDefault((String)args[0],(String)args[1]);
+                    case "edit": return editor[0];
+                    default: throw new UnsupportedOperationException(method.getName());
+                }
+            });
+        android.content.Context context=new android.content.ContextWrapper(null) {
+            public android.content.Context getApplicationContext(){return this;}
+            public String getPackageName(){return "com.infinifolder";}
+            public android.content.pm.PackageManager getPackageManager(){return null;}
+            public android.content.SharedPreferences getSharedPreferences(String name,int mode){return prefs;}
+        };
+        com.infinifolder.viewer.ExternalAppDefaults defaults=new com.infinifolder.viewer.ExternalAppDefaults(context);
+        android.content.ComponentName old=new android.content.ComponentName("com.infinifolder","com.infinifolder.viewer.AudioPlayerActivity");
+        android.content.ComponentName media=new android.content.ComponentName("com.infinimedia","com.infinimedia.InfiniMediaActivity");
+        String view="android.intent.action.VIEW";
+        defaults.remember(view,"extension",null,"audio/mpeg","song.mp3",old);
+        defaults.remember(view,"extension",null,"audio/mpeg","song.mpga",old);
+        defaults.remember(view,"extension",null,"audio/flac","song.flac",old);
+        defaults.remember(view,"file","another-file","audio/mpeg","song.mp3",old);
+        defaults.remember(view,"type",null,"audio/mpeg","song.mp3",media);
+        for(String name:new String[]{"song.mp3","song.mpga"})
+            check(defaults.candidates(view,null,"audio/mpeg",name).get(0).equals(media),"New type-wide audio default wins over seeded extensions");
+        check(defaults.candidates(view,null,"audio/flac","song.flac").get(0).equals(old),"Other MIME defaults preserved");
+        check(defaults.candidates(view,"another-file","audio/mpeg","song.mp3").get(0).equals(old),"Other file-specific defaults preserved");
+        defaults.remember(view,"type","another-file","audio/mpeg","song.mp3",media);
+        check(defaults.candidates(view,"another-file","audio/mpeg","song.mp3").get(0).equals(media),"Broad choice replaces current file override");
+        pass("saved-audio-default-roundtrip-and-type-choice-precedence");
+    }
     public static void main(String[] args) {
         try {
             root=Paths.get(args[0]);out=Paths.get(args[1]);Files.createDirectories(out);
@@ -202,31 +251,7 @@ public class ThemeRuntimeCheck {
             try { tf.getDeclaredMethod("setSystemFontMap",Map.class,List.class).invoke(null,fonts,Collections.emptyList()); }
             catch(NoSuchMethodException older) { tf.getDeclaredMethod("setSystemFontMap",Map.class).invoke(null,fonts); }
             Looper.prepareMainLooper();
-            if (args.length>2 && args[2].equals("benchmark")) {
-                long start=System.nanoTime();BitmapFrame frame=decode(bytes("infini.svg"),"infini.svg");
-                double decodeMs=(System.nanoTime()-start)/1e6;
-                int[] output=new int[frame.getBitmap().getWidth()*frame.getBitmap().getHeight()];
-                for(int i=0;i<8;i++)frame.getAnimation().render((i+1)*50_000_000L,output,true);
-                long[] times=new long[48];
-                for(int i=0;i<times.length;i++){start=System.nanoTime();frame.getAnimation().render((i+9)*50_000_000L,output,true);times[i]=System.nanoTime()-start;}
-                SvgPaletteCycling.Definition definition=SvgPaletteCycling.INSTANCE.parse(bytes("infini.svg"));
-                com.caverock.androidsvg.SVG reference=com.caverock.androidsvg.SVG.getFromString(definition.getSvg());
-                reference.setDocumentWidth("100%");reference.setDocumentHeight("100%");
-                Bitmap ref=Bitmap.createBitmap(frame.getBitmap().getWidth(),frame.getBitmap().getHeight(),Bitmap.Config.ARGB_8888);
-                int[] exact=new int[output.length];
-                for(long time:new long[]{0L,150_000_000L,1_700_000_000L,4_000_000_000L}) {
-                    frame.getAnimation().render(time,output,true);ref.eraseColor(0);
-                    reference.renderToCanvas(new Canvas(ref),com.caverock.androidsvg.RenderOptions.create().preserveAspectRatio(com.caverock.androidsvg.PreserveAspectRatio.LETTERBOX).css(definition.css(time)));
-                    ref.getPixels(exact,0,ref.getWidth(),0,0,ref.getWidth(),ref.getHeight());
-                    long error=0;int maximum=0,changed=0;
-                    for(int i=0;i<output.length;i++){if(output[i]!=exact[i])changed++;for(int shift=0;shift<=16;shift+=8){int diff=Math.abs((output[i]>>>shift&255)-(exact[i]>>>shift&255));error+=diff;maximum=Math.max(maximum,diff);}}
-                    check(error/(3.0*output.length)<1.0 && maximum<64,"Raster approximation stays within the supplied fixture tolerance");
-                    System.out.println("ACCURACY time_ns="+time+" mean_rgb_error="+(error/(3.0*output.length))+" max_rgb_error="+maximum+" changed_pixels="+changed);
-                    if(time==1_700_000_000L){Bitmap actual=Bitmap.createBitmap(output,ref.getWidth(),ref.getHeight(),Bitmap.Config.ARGB_8888);png(actual,"raster-phase.png");png(ref,"reference-phase.png");}
-                }
-                Arrays.sort(times);System.out.println("BENCH decode_ms="+decodeMs+" frame_median_ms="+times[times.length/2]/1e6+" frame_p95_ms="+times[(times.length*95/100)]/1e6+" frame_max_ms="+times[times.length-1]/1e6+" renderer="+frame.getAnimation().getDescription());System.exit(0);
-            }
-            rasterChecks();svgRegressionChecks();
+            rasterChecks();svgStillChecks();audioIntentChecks();defaultPreferenceChecks();
             if (args.length>2 && args[2].equals("decoder")){System.out.println("All decoder checks passed");System.exit(0);}
             pacingChecks(()->{try{lifecycleChecks();}catch(Exception error){throw new RuntimeException(error);}});Looper.loop();
         } catch(Throwable error) { error.printStackTrace();System.exit(1); }

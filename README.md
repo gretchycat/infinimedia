@@ -76,10 +76,10 @@ attribution to Sven Kistner, Zarko Jovic, GuidoD and Wildrose-Wally.
 
 Skin images use Canvas format discovery, so logical `main.bmp` sprite lookups can
 resolve IFF, PNG, SVG and other supported decoders. `theme.json` can select an
-arbitrary filename or up to four same-size image layers. IFF palette cycling and
-the supplied [`infini.svg`](infini.svg) indexed SVG extension animate while the
-player is resumed and pause with its lifecycle. See Canvas’s SVG palette-cycling
-API documentation for supported metadata and validation limits.
+arbitrary filename or up to four same-size image layers. IFF palette cycling
+animates while the player is resumed and pauses with its lifecycle. SVG/SVGZ,
+including the preserved [`infini.svg`](infini.svg) source, render as still images;
+custom SVG color-cycling metadata is ignored. Use indexed IFF for cycling artwork.
 
 ```sh
 python3 scripts/test-package-default-theme.py
@@ -105,21 +105,12 @@ This supersedes the earlier four-skin packaging checkpoint. Activity appearance,
 touch and video surface composition still need device acceptance. Ubuntu tests
 and other-platform ports remain deferred.
 
-## SVG color-cycling playback
+## File associations
 
-Flat indexed SVG paints are rasterized once at the decoded size. Playback updates
-cached palette-bound pixels, preserving the source palette (including more than
-256 colors) and keeping untagged artwork fixed. This replaces per-frame CSS and
-vector path rendering. The image schedulers count rendering/publication work
-inside the frame interval, so that work is not followed by another full delay.
-Raster setup adds a one-time loading cost. Mixed antialiased/overlapping paints
-can have small color approximation differences; tagged animated gradient stops
-retain the exact vector fallback. The SVG source is unchanged.
+The exported `InfiniMediaActivity` handles Android `ACTION_VIEW` with `CATEGORY_DEFAULT`, including `audio/*`, `video/*`, specific audio/playlist MIME types and content/file URIs. These filters are generated from linked runtime capabilities during the build. No system-wide audio default is changed automatically.
 
-`python3 scripts/verify-theme-runtime.py --benchmark` measures decode and warmed
-renderer timing and compares sampled frames against the vector reference. This
-measures CPU rendering, not visible UI frame rate. The normal probe also tests
-all 192 phases in infini.svg, a complete 300-color cycle, duplicate palette IDs,
-opacity, still previews, gradient fallback and both playback scheduler deadlines.
+In Android's file-opening resolver, choose Infinimedia and **Always** when offered. A sending app that uses `Intent.createChooser` forces a one-time choice and cannot save an Android default. The app-info “Open by default” screen primarily manages supported web links and may not offer an audio-player selection. See [Android's intent resolution documentation](https://developer.android.com/guide/components/intents-filters).
 
-The final SVG correction at 6acbbec passed 80 app tests and all 15 Android runtime groups in the independent checkout, including pixel-identical IFF/BMP still previews. Canvas passed 104 tests and shared UI passed 126. These checks cover the renderer and playback controllers; visible UI/display FPS remains a separate device acceptance check.
+Inside Infinifolder, use **Open with… → Remember in InfiniFolder → All files of this type**, then choose Infinimedia. Those are local preferences, separate from Android defaults. The Folder update migrates saved choices pointing to its removed internal media players; the shared preference update lets explicit type-wide choices supersede old extension defaults.
+
+The runtime probe checks the built APK's binary manifest with Android's own IntentFilter matcher for opaque content IDs and audio/video/playlist MIME types. It also verifies static SVG/SVGZ rendering, unchanged IFF cycling and first-frame pixels, frame assembly, scheduler deadlines and cache lifecycle. It does not automate Android's visible resolver or default-setting UI.
