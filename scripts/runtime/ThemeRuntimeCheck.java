@@ -148,6 +148,55 @@ public class ThemeRuntimeCheck {
             });
         });
     }
+    static byte[] project(String mime, byte[] preview) throws Exception {
+        ByteArrayOutputStream bytes=new ByteArrayOutputStream();
+        try(java.util.zip.ZipOutputStream zip=new java.util.zip.ZipOutputStream(bytes)) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("mimetype"));zip.write(mime.getBytes(java.nio.charset.StandardCharsets.US_ASCII));zip.closeEntry();
+            zip.putNextEntry(new java.util.zip.ZipEntry("preview.png"));zip.write(preview);zip.closeEntry();
+            // Trailing project data is intentionally not needed to extract the preview.
+            zip.putNextEntry(new java.util.zip.ZipEntry("layers/data"));zip.write(new byte[1024]);zip.closeEntry();
+        }
+        return bytes.toByteArray();
+    }
+    static void thumbnailChecks() throws Exception {
+        Bitmap input=Bitmap.createBitmap(12,6,Bitmap.Config.ARGB_8888);input.eraseColor(Color.CYAN);
+        ByteArrayOutputStream png=new ByteArrayOutputStream();input.compress(Bitmap.CompressFormat.PNG,100,png);
+        for(String ext:new String[]{"ora","kra"}) {
+            byte[] bytes=project(ext.equals("ora")?"image/openraster":"application/x-krita",png.toByteArray());
+            String mime=ext.equals("ora")?"image/openraster":"image/x-krita";
+            check(com.infinifolder.storage.FileMagicDetector.INSTANCE.detectFromStream("project."+ext,mime,(long)bytes.length,()->new ByteArrayInputStream(bytes)).getMimeType().equals(mime),"Project identity survives ZIP wrapper "+ext);
+            ThumbnailDecoder decoder=new ThumbnailDecoder(null,uri->new ByteArrayInputStream(bytes));
+            Bitmap bitmap=decoder.decode(android.net.Uri.parse("content://provider/opaque-id"),8,ext,mime);
+            check(bitmap!=null && bitmap.getWidth()==8 && bitmap.getHeight()==4 && bitmap.getPixel(2,2)==Color.CYAN,"Project thumbnail through opaque content URI "+ext);
+        }
+        pass("ora-kra-identity-and-streamed-content-thumbnails");
+        String svg="<svg xmlns='http://www.w3.org/2000/svg' width='12' height='6'><rect width='12' height='6' fill='#0ff'/>"+"<!-- filler -->".repeat(12000)+"</svg>";
+        ByteArrayOutputStream encoded=new ByteArrayOutputStream();try(java.util.zip.GZIPOutputStream zip=new java.util.zip.GZIPOutputStream(encoded)){zip.write(svg.getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+        byte[] bytes=encoded.toByteArray();
+        check(com.infinifolder.storage.FileMagicDetector.INSTANCE.detectFromStream("large.svgz","image/svg+xml",(long)bytes.length,()->new ByteArrayInputStream(bytes)).getMimeType().equals("image/svg+xml"),"Large SVGZ identity survives gzip wrapper");
+        Bitmap svgz=new ThumbnailDecoder(null,uri->new ByteArrayInputStream(bytes)).decode(android.net.Uri.parse("content://provider/opaque"),8,"svgz","image/svg+xml");
+        check(svgz!=null && svgz.getWidth()==8 && svgz.getHeight()==4 && svgz.getPixel(2,2)==Color.CYAN,"Large SVGZ thumbnails without cycling");
+        pass("large-svgz-identity-and-static-thumbnail");
+        byte[] eps=("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 8 2\n%%BeginPreview: 8 2 1 2\n% ff\n% 00\n%%EndPreview\n%%EOF\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        com.infinifolder.preview.IconRegistry registry=com.infinifolder.preview.IconRegistry.Companion.at(out.resolve("eps-registry").toFile());
+        check(registry.mime("application/postscript").isImage(),"Application PostScript MIME requests a thumbnail");
+        String extension=registry.rendererExtension("application/postscript","image.eps");check("eps".equals(extension),"EPS renderer hint retained");
+        Bitmap bitmap=new ThumbnailDecoder(null,uri->new ByteArrayInputStream(eps)).decode(android.net.Uri.parse("content://provider/opaque"),8,extension,"application/postscript");
+        check(bitmap!=null && bitmap.getWidth()==8 && bitmap.getHeight()==2,"EPSI preview rendered");
+        byte[] real=bytes("libraries/libinfinicanvas/canvas-android/src/test/resources/images/icon.eps");
+        Bitmap fixture=new ThumbnailDecoder(null,uri->new ByteArrayInputStream(real)).decode(android.net.Uri.parse("content://provider/test-icon"),96,"eps","application/postscript");
+        check(fixture!=null && fixture.getWidth()==96 && fixture.getHeight()==96,"Actual test-directory EPS renders through PostScript MIME");
+        png(fixture,"test-icon-eps-thumbnail.png");
+        for(String ext:new String[]{"ora","kra"}) {
+            byte[] realProject=bytes("libraries/libinfinicanvas/canvas-android/src/test/resources/images/icon."+ext);
+            String mime=ext.equals("ora")?"image/openraster":"image/x-krita";
+            Bitmap actual=new ThumbnailDecoder(null,uri->new ByteArrayInputStream(realProject)).decode(android.net.Uri.parse("content://provider/test-icon"),96,ext,mime);
+            check(actual!=null && actual.getWidth()==96 && actual.getHeight()==96,"Actual project thumbnail "+ext);
+            check(com.infinifolder.storage.FileMagicDetector.INSTANCE.detectFromStream("icon."+ext,mime,(long)realProject.length,()->new ByteArrayInputStream(realProject)).getMimeType().equals(mime),"Actual project image identity "+ext);
+            png(actual,"test-icon-"+ext+"-thumbnail.png");
+        }
+        pass("postscript-mime-routes-to-eps-preview");
+    }
     static void audioIntentChecks() throws Exception {
         android.content.res.AssetManager assets=android.content.res.AssetManager.class.getDeclaredConstructor().newInstance();
         int cookie=(Integer)assets.getClass().getDeclaredMethod("addAssetPath",String.class).invoke(assets,System.getenv("INFINI_TEST_APK"));
@@ -251,7 +300,7 @@ public class ThemeRuntimeCheck {
             try { tf.getDeclaredMethod("setSystemFontMap",Map.class,List.class).invoke(null,fonts,Collections.emptyList()); }
             catch(NoSuchMethodException older) { tf.getDeclaredMethod("setSystemFontMap",Map.class).invoke(null,fonts); }
             Looper.prepareMainLooper();
-            rasterChecks();svgStillChecks();audioIntentChecks();defaultPreferenceChecks();
+            rasterChecks();svgStillChecks();thumbnailChecks();audioIntentChecks();defaultPreferenceChecks();
             if (args.length>2 && args[2].equals("decoder")){System.out.println("All decoder checks passed");System.exit(0);}
             pacingChecks(()->{try{lifecycleChecks();}catch(Exception error){throw new RuntimeException(error);}});Looper.loop();
         } catch(Throwable error) { error.printStackTrace();System.exit(1); }
