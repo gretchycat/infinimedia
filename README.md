@@ -45,6 +45,8 @@ The debug APK is `build/outputs/apk/debug/InfiniMedia-debug.apk`. Optionally pas
 and their transitive closure are pinned in `dependencies.lock.json`; fetching
 never requires a sibling application. It refuses to overwrite changed dependency
 checkouts. Run `python3 scripts/fetch-dependencies.py --check` to inspect pins.
+The flattened app pins choose one exact revision for each shared library and
+verify that it descends from every library's declared dependency commit.
 
 For Termux, install its JDK, clang, aapt2, Python, patchelf and libopenmpt packages.
 The build script configures native aapt2 automatically; direct Gradle calls need
