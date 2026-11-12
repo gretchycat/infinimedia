@@ -177,6 +177,15 @@ public class ThemeRuntimeCheck {
         Bitmap svgz=new ThumbnailDecoder(null,uri->new ByteArrayInputStream(bytes)).decode(android.net.Uri.parse("content://provider/opaque"),8,"svgz","image/svg+xml");
         check(svgz!=null && svgz.getWidth()==8 && svgz.getHeight()==4 && svgz.getPixel(2,2)==Color.CYAN,"Large SVGZ thumbnails without cycling");
         pass("large-svgz-identity-and-static-thumbnail");
+        String fixtures=System.getenv("INFINI_IMAGE_FIXTURES");
+        if(fixtures!=null) {
+            byte[] original=Files.readAllBytes(Paths.get(fixtures).resolve("icon.svgz"));
+            check(com.infinifolder.storage.FileMagicDetector.INSTANCE.detectFromStream("icon.svgz","image/svg+xml",(long)original.length,()->new ByteArrayInputStream(original)).getMimeType().equals("image/svg+xml"),"Original test SVGZ retains image identity");
+            Bitmap actual=new ThumbnailDecoder(null,uri->new ByteArrayInputStream(original)).decode(android.net.Uri.parse("content://provider/test-svgz"),96,"svgz","image/svg+xml");
+            check(actual!=null && actual.getWidth()==96 && actual.getHeight()==96,"Original test SVGZ produces a thumbnail");
+            png(actual,"test-icon-svgz-thumbnail.png");pass("original-test-directory-svgz-thumbnail");
+        }
+
         byte[] eps=("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 8 2\n%%BeginPreview: 8 2 1 2\n% ff\n% 00\n%%EndPreview\n%%EOF\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
         com.infinifolder.preview.IconRegistry registry=com.infinifolder.preview.IconRegistry.Companion.at(out.resolve("eps-registry").toFile());
         check(registry.mime("application/postscript").isImage(),"Application PostScript MIME requests a thumbnail");
