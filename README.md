@@ -91,3 +91,16 @@ The runtime probe checks real SVG/IFF pixels, cache play/pause/clear, format
 signature detection, and frame resizing. It exports full-frame PNG previews to
 `build/theme-runtime/`. It does not exercise Activity layout, touch input, video
 surfaces, Android permissions or visible on-device playback.
+
+## Default-theme verification checkpoint (2026-11-11)
+
+Implementation 9938277 passed `./build.sh --max-workers=1 --console=plain` in the
+independent user checkout with SDK variables unset, no local.properties and a
+source-root guard. All 80 app tests and 11 build-environment checks passed.
+The APK contains exactly `assets/skins/Infini.wsz`, with no SF3 or other skin
+archives. All 8 Android raster/lifecycle checks and 3 packaging checks passed.
+The generated skin bytes match between source packaging, the independent build
+and its APK (SHA-256 `2165e2594f635273c881cb21e7117bc20aa63058e2c27d1744ac72b9d933717b`).
+This supersedes the earlier four-skin packaging checkpoint. Activity appearance,
+touch and video surface composition still need device acceptance. Ubuntu tests
+and other-platform ports remain deferred.
