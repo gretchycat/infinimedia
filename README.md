@@ -118,3 +118,7 @@ The runtime probe checks the built APK's binary manifest with Android's own Inte
 ## Static SVG / audio-default verification checkpoint
 
 Implementation f3d7bea passed this repository's build.sh in the independent user checkout: 80 unit tests, 11 environment checks and all three theme packaging tests. All 13 real Android runtime groups passed against APK SHA-256 `a1bad381fe7f40f74cad1f3983b2228227dec88d5ae34daf9b4b5b8154d0fdb6`. They verify static SVG/SVGZ, unchanged IFF cycling, saved-default serialization/precedence, packaged audio intent matching, frame pixels and lifecycle/deadline behavior. Removed SVG cycling classes are absent from the APK. Visible Android chooser/Always interaction remains manual acceptance. This supersedes the earlier SVG playback experiment; no system default was changed by the probe.
+
+## Authoring-thumbnail verification follow-up
+
+The updated Canvas/Core/UI pins fix ORA/KRA authoring identity, large SVGZ classification and PostScript thumbnail aliases. Implementation aea7644 passed the independent build.sh with 80 unit tests and 11 environment cases; all three skin packaging checks passed. The Android probe passed 16 groups, or 17 with `--image-fixtures /path/to/filesystem-test-images/images` to include the original SVGZ. The real EPS/ORA/KRA and original SVGZ outputs were visually checked. Tested APK SHA-256: `468ce8fb555a1b114247b179b8b94e6f5656e04e879adb1da152654f3dcb43f8`. The fixture option changes test tooling only. No storage implementation or image-viewer screen dependency was added.
