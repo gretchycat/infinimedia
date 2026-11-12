@@ -121,3 +121,5 @@ renderer timing and compares sampled frames against the vector reference. This
 measures CPU rendering, not visible UI frame rate. The normal probe also tests
 all 192 phases in infini.svg, a complete 300-color cycle, duplicate palette IDs,
 opacity, still previews, gradient fallback and both playback scheduler deadlines.
+
+The final SVG correction at 6acbbec passed 80 app tests and all 15 Android runtime groups in the independent checkout, including pixel-identical IFF/BMP still previews. Canvas passed 104 tests and shared UI passed 126. These checks cover the renderer and playback controllers; visible UI/display FPS remains a separate device acceptance check.
