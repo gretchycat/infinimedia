@@ -138,10 +138,9 @@ class CastMediaServer(private val context: Context) {
         return owner.analysisResource()
     }
 
-    /** Prepare the next SFTP source and its first block while the current track plays. */
+    /** Prepare the next directly streamable source and its first block while the current track plays. */
     fun prepareNext(url: String, track: AudioTrack) {
-        if (!track.uri.scheme.equals("sftp", true) ||
-            !AudioTranscoder.isDirectlyPlayableByCast(track.uri, track.fileName)) return
+        if (!AudioTranscoder.isDirectlyPlayableByCast(track.uri, track.fileName)) return
         val token = url.substringAfterLast('/')
         val workers = executor ?: return
         try {

@@ -72,7 +72,16 @@ data class AudioTrack(
     val sourceReference: String? = null,
     val directoryReference: String? = null,
     val directoryCoverReference: String? = null
-)
+) {
+    /** Android URI currently used to read this item. */
+    val contentUri: Uri? get() = uri.takeIf {
+        it.scheme.equals("content", true)
+    }
+    /** Durable backend identity used for persistence and relative resolution. */
+    val authoritativeUri: Uri get() = io.github.gretchycat.infiniselect.InfiniSelect
+        .authoritativeCandidate(sourceReference, uri)
+        ?: throw IllegalStateException("Media item has no authoritative URI")
+}
 
 internal data class CastPlaylistSelection(val playlistIndex: Int, val track: AudioTrack)
 
@@ -106,32 +115,6 @@ class AudioPlayerService : Service() {
             private set
         fun addListener(l: AudioPlayerListener) = synchronized(listeners) { if (!listeners.contains(l)) listeners.add(l) }
         fun removeListener(l: AudioPlayerListener) = synchronized(listeners) { listeners.remove(l) }
-        fun uriMatches(u1: Uri?, u2: Uri?): Boolean {
-            if (u1 == null || u2 == null) return false
-            if (u1 == u2 || u1.toString() == u2.toString()) return true
-            val a1 = com.infinifolder.archive.ArchiveUri.isArchiveUri(u1)
-            val a2 = com.infinifolder.archive.ArchiveUri.isArchiveUri(u2)
-            if (a1 || a2) {
-                if (!a1 || !a2) return false
-                // Archive identity lives in source/path query parameters. Its
-                // empty URI path must never alias every other archive entry.
-                return runCatching {
-                    com.infinifolder.archive.ArchiveUri.getEntryPath(u1) == com.infinifolder.archive.ArchiveUri.getEntryPath(u2) &&
-                        com.infinifolder.archive.ArchiveUri.isDeletedView(u1) == com.infinifolder.archive.ArchiveUri.isDeletedView(u2) &&
-                        uriMatches(com.infinifolder.archive.ArchiveUri.getSourceUri(u1), com.infinifolder.archive.ArchiveUri.getSourceUri(u2))
-                }.getOrDefault(false)
-            }
-            val p1 = u1.path?.let { Uri.decode(it) }?.trimEnd('/')
-            val p2 = u2.path?.let { Uri.decode(it) }?.trimEnd('/')
-            if (p1 != null && p2 != null) {
-                val sub1 = p1.removePrefix("/shared").removePrefix("/root")
-                val sub2 = p2.removePrefix("/shared").removePrefix("/root")
-                if (sub1.isEmpty() || sub2.isEmpty()) return false
-                if (sub1.isNotEmpty() && sub1 == sub2) return true
-                if (p1.endsWith(sub2) || p2.endsWith(sub1)) return true
-            }
-            return false
-        }
     }
 
     @Volatile var cacheFailure: Pair<Throwable, Uri>? = null
@@ -320,14 +303,17 @@ class AudioPlayerService : Service() {
                 val uriStr = intent.getStringExtra("uri")
                 val name = intent.getStringExtra("name") ?: "Audio Track"
                 val mimeType = intent.getStringExtra("mimeType") ?: intent.type
+                val authoritative = intent.getStringExtra(
+                    io.github.gretchycat.infiniselect.FileSelectionContract.EXTRA_RESULT_AUTHORITATIVE_URI)
                 uriStr?.let {
                     val uri = Uri.parse(it)
+                    val source = authoritative?.let(Uri::parse) ?: uri
                     // Activity expands playlist references into the queue. Do not first
                     // treat the playlist document itself as an audio track; that races
                     // queue initialization and sends XML/JSON bytes to the audio decoder.
                     if (!PlaylistExpander.isPlaylist(uri, name, mimeType)) {
                         val cur = currentTrack
-                        if (cur == null || !uriMatches(cur.uri, uri)) {
+                        if (cur == null || cur.authoritativeUri != source) {
                             val kind = when {
                                 AnsiPlaybackSupport.isAnsiFile(name, mimeType) -> PlaylistMediaKind.ANSI
                                 else -> when (MediaTypeDetector.detect(name, mimeType)) {
@@ -337,6 +323,7 @@ class AudioPlayerService : Service() {
                                 }
                             }
                             setPlaylist(listOf(AudioTrack(uri, name, fileName = name,
+                                sourceReference = source.toString(),
                                 mediaKind = kind, sourceMimeType = mimeType)), 0)
                         }
                     }
@@ -426,7 +413,7 @@ class AudioPlayerService : Service() {
     }
 
     private fun sameTrack(a: AudioTrack, b: AudioTrack): Boolean =
-        uriMatches(a.uri, b.uri) && a.startByte == b.startByte && a.lengthBytes == b.lengthBytes
+        a.authoritativeUri == b.authoritativeUri && a.startByte == b.startByte && a.lengthBytes == b.lengthBytes
 
     fun setPlaylist(tracks: List<AudioTrack>, startIndex: Int = 0, preservePlaylistOrder: Boolean = false) {
         restorePositionTrack = null
@@ -438,7 +425,8 @@ class AudioPlayerService : Service() {
         val selectedPlaylistFile = targetTrack?.let { PlaylistExpander.isPlaylist(it.uri, it.title) } == true
         val expanded = mutableListOf<AudioTrack>()
         for (t in tracks) {
-            if (PlaylistExpander.isPlaylist(t.uri, t.title)) expanded.addAll(PlaylistExpander.expandPlaylist(this, t.uri))
+            if (PlaylistExpander.isPlaylist(t.uri, t.title)) expanded.addAll(PlaylistExpander.expandPlaylist(this, t.uri,
+                authoritativePlaylistUri = t.authoritativeUri))
             else expanded.add(t)
         }
         val effectiveIndex = targetTrack?.let { target -> expanded.indexOfFirst { sameTrack(it, target) } }
@@ -475,7 +463,8 @@ class AudioPlayerService : Service() {
         invalidateGapless()
         val expanded = mutableListOf<AudioTrack>()
         for (t in tracks) {
-            if (PlaylistExpander.isPlaylist(t.uri, t.title)) expanded.addAll(PlaylistExpander.expandPlaylist(this, t.uri))
+            if (PlaylistExpander.isPlaylist(t.uri, t.title)) expanded.addAll(PlaylistExpander.expandPlaylist(this, t.uri,
+                authoritativePlaylistUri = t.authoritativeUri))
             else expanded.add(t)
         }
         synchronized(playlist) {
@@ -483,9 +472,12 @@ class AudioPlayerService : Service() {
             val refreshed = retainUnreadableState(playlist, expanded)
             originalPlaylist.clear(); originalPlaylist.addAll(refreshed)
             playlist.clear(); playlist.addAll(refreshed)
-            val idx = if (active != null && uriMatches(active.uri, currentUri)) {
+            val currentIdentity = io.github.gretchycat.infiniselect.InfiniSelect.authoritativeUri(
+                this, currentUri.toString()) ?: currentUri
+            val idx = if (active != null &&
+                (active.uri == currentUri || active.authoritativeUri == currentIdentity)) {
                 playlist.indexOfFirst { sameTrack(it, active) }
-            } else playlist.indexOfFirst { uriMatches(it.uri, currentUri) }
+            } else playlist.indexOfFirst { it.authoritativeUri == currentIdentity }
             if (idx >= 0) {
                 currentIndex = idx
                 if (active != null && sameTrack(playlist[idx], active)) {
@@ -515,7 +507,8 @@ class AudioPlayerService : Service() {
 
     fun enqueue(track: AudioTrack) {
         if (PlaylistExpander.isPlaylist(track.uri, track.title)) {
-            enqueueAll(PlaylistExpander.expandPlaylist(this, track.uri))
+            enqueueAll(PlaylistExpander.expandPlaylist(this, track.uri,
+                authoritativePlaylistUri = track.authoritativeUri))
         } else enqueueAll(listOf(track))
     }
 
@@ -1007,7 +1000,16 @@ class AudioPlayerService : Service() {
         currentTrackMetadataThread?.interrupt()
         currentTrackMetadataThread = null
         invalidateGapless()
-        val track = currentTrack ?: return
+        var track = currentTrack ?: return
+        track = resolveTrackAccess(track)
+        synchronized(playlist) {
+            if (currentIndex in playlist.indices && sameTrack(playlist[currentIndex], track)) {
+                playlist[currentIndex] = track
+            }
+            originalPlaylist.indices.forEach { index ->
+                if (sameTrack(originalPlaylist[index], track)) originalPlaylist[index] = track
+            }
+        }
         currentAnsiPresentation = null
         val thisLoadId = loadCounter.incrementAndGet()
         val resumePosition = restoredPositionFor(track)
@@ -1694,7 +1696,7 @@ class AudioPlayerService : Service() {
         var directoryArtwork = original.directoryArtwork
         if (directoryArtwork == null) {
             for (coverUri in candidateCoverUris) {
-                directoryArtwork = loadCoverArtwork(coverUri)
+                directoryArtwork = loadCoverArtwork(coverUri, original.directoryCoverReference)
                 if (directoryArtwork != null) {
                     directoryCoverUri = coverUri
                     break
@@ -1745,19 +1747,22 @@ class AudioPlayerService : Service() {
         }
     }
 
-    private fun loadCoverArtwork(coverUri: Uri): Bitmap? {
-        directoryArtworkBitmapCache.get(coverUri.toString())?.let { return it }
+    private fun loadCoverArtwork(coverUri: Uri, authoritativeReference: String? = null): Bitmap? {
+        val identity = authoritativeReference ?: coverUri.toString()
+        directoryArtworkBitmapCache.get(identity)?.let { return it }
+        val accessUri = io.github.gretchycat.infiniselect.InfiniSelect.resolveSource(
+            this, identity, mimeType = "image/*")?.contentUri ?: return null
         return try {
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            MediaSourceAdapter.openStream(this, coverUri).use { BitmapFactory.decodeStream(it, null, options) }
+            MediaSourceAdapter.openStream(this, accessUri).use { BitmapFactory.decodeStream(it, null, options) }
             if (options.outWidth <= 0 || options.outHeight <= 0) return null
             var sample = 1
             // Playlist rows and the player surface do not need full resolution. Keep
             // one shared, sampled bitmap per directory instead of retaining originals.
             while (options.outWidth / sample > 256 || options.outHeight / sample > 256) sample *= 2
             val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sample }
-            MediaSourceAdapter.openStream(this, coverUri).use { BitmapFactory.decodeStream(it, null, decodeOptions) }
-                ?.also { directoryArtworkBitmapCache.put(coverUri.toString(), it) }
+            MediaSourceAdapter.openStream(this, accessUri).use { BitmapFactory.decodeStream(it, null, decodeOptions) }
+                ?.also { directoryArtworkBitmapCache.put(identity, it) }
         } catch (error: Exception) {
             android.util.Log.w("AudioPlayerService", "Could not decode directory cover $coverUri", error)
             null
@@ -2202,9 +2207,10 @@ class AudioPlayerService : Service() {
 
     private fun resolveTrackMetadataLight(track: AudioTrack): AudioTrack? {
         if (Thread.currentThread().isInterrupted) return null
-        var result = track
+        val accessibleTrack = resolveTrackAccess(track)
+        var result = accessibleTrack
         try {
-            AudioPlaybackInput.open(this, track.uri, track.fileName, metadataOnly = true).use { input ->
+            AudioPlaybackInput.open(this, accessibleTrack.uri, accessibleTrack.fileName, metadataOnly = true).use { input ->
                 val tags = readTrackTags(input, includeArtwork = true)
                 val segmented = track.startByte > 0 || track.lengthBytes > 0 || track.decoderExtension != null
                 val duration = if (track.durationMs > 0 || segmented) track.durationMs
@@ -2243,6 +2249,26 @@ class AudioPlayerService : Service() {
         return resolveDirectoryArtworkLight(result)
     }
 
+    /** Resolve only when a track is about to play or be inspected by the metadata worker. */
+    private fun resolveTrackAccess(track: AudioTrack): AudioTrack {
+        val canonical = io.github.gretchycat.infiniselect.InfiniSelect.authoritativeUri(
+            this, track.authoritativeUri.toString()) ?: track.authoritativeUri
+        var updated = if (canonical == track.authoritativeUri) track
+            else track.copy(sourceReference = canonical.toString())
+        if (updated.uri == canonical && updated.uri.scheme.equals("content", true)) return updated
+        if (updated.uri.scheme.equals("content", true) && hasReadableRelay(updated.uri)) return updated
+        val resolved = io.github.gretchycat.infiniselect.InfiniSelect.resolveSource(
+            this, canonical.toString(), updated.fileName, updated.sourceMimeType)
+            ?: return updated
+        updated = updated.copy(uri = resolved.contentUri, sourceReference = resolved.authoritativeUri.toString())
+        return updated
+    }
+
+    private fun hasReadableRelay(uri: Uri): Boolean = runCatching {
+        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { it.moveToFirst() } == true
+    }.getOrDefault(false)
+
     /** Resolve sibling cover metadata and a small reusable image for every queued track. */
     private fun resolveDirectoryArtworkLight(track: AudioTrack): AudioTrack {
         if (Thread.currentThread().isInterrupted) return track
@@ -2259,7 +2285,7 @@ class AudioPlayerService : Service() {
         if (directoryArtwork == null) {
             for (coverUri in candidates) {
                 if (Thread.currentThread().isInterrupted) break
-                val decoded = loadCoverArtwork(coverUri)
+                val decoded = loadCoverArtwork(coverUri, track.directoryCoverReference)
                 if (decoded != null) {
                     selectedCover = coverUri
                     directoryArtwork = decoded

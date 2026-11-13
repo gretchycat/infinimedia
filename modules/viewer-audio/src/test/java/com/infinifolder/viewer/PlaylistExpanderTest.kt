@@ -135,6 +135,13 @@ class PlaylistExpanderTest {
     }
 
     @Test
+    fun relativePlaylistEntriesResolveFromTheAuthoritativeRemotePlaylistLocation() {
+        val playlist = TestUri("sftp://192.168.1.25/Music/Album/playlist.m3u")
+        val resolved = PlaylistExpander.resolveEntryUri(dummyContext(), playlist, "../OtherAlbum/song.flac")
+        assertEquals("sftp://192.168.1.25/Music/OtherAlbum/song.flac", resolved.toString())
+    }
+
+    @Test
     fun testNestedPlaylistRecursiveExpansionInOrder() {
         val nestedFile = File(playlistsDir, "nested_playlist.m3u")
         assertTrue("nested_playlist.m3u must exist", nestedFile.exists())

@@ -65,6 +65,7 @@ internal class AudioPlaylistStore(context: Context) {
     private fun writeTracks(tracks: List<AudioTrack>): JSONArray = JSONArray().apply {
         tracks.forEach { track ->
             val sourceLocation = AudioPlaylistLocations.authoritative(track.uri, track.sourceReference)
+                ?: throw IllegalArgumentException("Cannot save a queue entry without an authoritative source URI")
             val directoryLocation = AudioPlaylistLocations.authoritative(track.directoryUri, track.directoryReference)
             val coverLocation = AudioPlaylistLocations.authoritative(track.directoryCoverUri, track.directoryCoverReference)
             put(JSONObject()
@@ -99,16 +100,30 @@ internal class AudioPlaylistStore(context: Context) {
         for (index in 0 until array.length()) {
             val item = array.optJSONObject(index) ?: continue
             val uri = item.optString("uri").takeIf(String::isNotBlank)?.let(Uri::parse) ?: continue
-            val sourceReference = item.stringOrNull("sourceReference")
-            val restoredUri = refreshExpiredSelectionUri(uri, sourceReference) ?: uri
-            val directoryCoverUri = item.stringOrNull("directoryCoverUri")?.let(Uri::parse)
-            val directoryCoverReference = item.stringOrNull("directoryCoverReference")
-            val restoredDirectoryCover = directoryCoverUri?.let {
-                refreshExpiredSelectionUri(it, directoryCoverReference) ?: it
-            }
+            val storedReference = item.stringOrNull("sourceReference") ?: uri.toString()
+            val itemName = item.optString("fileName").ifBlank { item.optString("title", "Audio Track") }
+            val sourceReference = sequenceOf(storedReference, uri.toString())
+                .mapNotNull { io.github.gretchycat.infiniselect.InfiniSelect
+                    .authoritativeUri(appContext, it)?.toString() }
+                .firstOrNull() ?: continue
+            val restoredUri = Uri.parse(sourceReference)
+            val storedCoverReference = item.stringOrNull("directoryCoverReference")
+                ?: item.stringOrNull("directoryCoverUri")
+            val storedCoverUri = item.stringOrNull("directoryCoverUri")
+            val coverReference = sequenceOf(storedCoverReference, storedCoverUri).filterNotNull()
+                .mapNotNull { io.github.gretchycat.infiniselect.InfiniSelect
+                    .authoritativeUri(appContext, it)?.toString() }
+                .firstOrNull()
+            val restoredDirectoryCover = coverReference?.let(Uri::parse)
+            val storedDirectoryReference = item.stringOrNull("directoryReference")
+                ?: item.stringOrNull("directoryUri")
+            val directoryReference = sequenceOf(storedDirectoryReference).filterNotNull()
+                .mapNotNull { io.github.gretchycat.infiniselect.InfiniSelect
+                    .authoritativeUri(appContext, it)?.toString() }
+                .firstOrNull()
             add(AudioTrack(
                 uri = restoredUri,
-                title = item.optString("title").ifBlank { item.optString("fileName", "Audio Track") },
+                title = item.optString("title").ifBlank { itemName },
                 artist = item.stringOrNull("artist"),
                 album = item.stringOrNull("album"),
                 durationMs = item.optLong("durationMs", 0L).coerceAtLeast(0L),
@@ -118,27 +133,21 @@ internal class AudioPlaylistStore(context: Context) {
                 sampleRateHz = item.intOrNull("sampleRateHz"),
                 channels = item.intOrNull("channels"),
                 isBitrateRelevant = item.optBoolean("isBitrateRelevant", true),
-                fileName = item.optString("fileName").ifBlank { item.optString("title", "Audio Track") },
+                fileName = itemName,
                 isUnreadable = item.optBoolean("isUnreadable", false),
                 decoderExtension = item.stringOrNull("decoderExtension"),
                 sourceReference = sourceReference,
                 directoryCoverUri = restoredDirectoryCover,
-                directoryCoverReference = directoryCoverReference,
-                directoryUri = item.stringOrNull("directoryUri")?.let(Uri::parse),
+                directoryCoverReference = coverReference,
+                directoryUri = directoryReference?.let(Uri::parse),
                 directoryName = item.stringOrNull("directoryName"),
-                directoryReference = item.stringOrNull("directoryReference"),
+                directoryReference = directoryReference,
                 directoryArtworkMetadataResolved = item.optBoolean("directoryArtworkMetadataResolved", false),
                 mediaKind = runCatching { PlaylistMediaKind.valueOf(item.optString("mediaKind", "AUDIO")) }
                     .getOrDefault(PlaylistMediaKind.AUDIO),
                 sourceMimeType = item.stringOrNull("sourceMimeType")
             ))
         }
-    }
-
-    private fun refreshExpiredSelectionUri(uri: Uri, reference: String?): Uri? {
-        if (!uri.authority.orEmpty().endsWith(".selection", ignoreCase = true)) return null
-        return io.github.gretchycat.infiniselect.InfiniSelect.resolveSourceReference(appContext, reference)
-            ?.takeIf { it != uri }
     }
 
     companion object {
@@ -154,7 +163,7 @@ internal object AudioPlaylistJspf {
         val items = JSONArray()
         tracks.forEach { track ->
             val sourceLocation = AudioPlaylistLocations.authoritative(track.uri, track.sourceReference)
-                ?: track.uri.toString()
+                ?: throw IllegalArgumentException("Cannot save a playlist entry without an authoritative source URI")
             val directoryLocation = AudioPlaylistLocations.authoritative(track.directoryUri, track.directoryReference)
             val coverLocation = AudioPlaylistLocations.authoritative(track.directoryCoverUri, track.directoryCoverReference)
             val item = JSONObject()
@@ -194,13 +203,7 @@ internal object AudioPlaylistJspf {
 /** Prefer InfiniSelect's stable source identity over its short-lived selection relay. */
 internal object AudioPlaylistLocations {
     fun authoritative(uri: Uri?, reference: String?): String? =
-        reference?.takeUnless(::isTemporarySelectionRelay) ?: uri?.toString()
-
-    private fun isTemporarySelectionRelay(value: String): Boolean {
-        if (!value.startsWith("content://", ignoreCase = true)) return false
-        val authority = value.substringAfter("://").substringBefore('/').substringBefore('?').substringBefore('#')
-        return authority.endsWith(".selection", ignoreCase = true)
-    }
+        io.github.gretchycat.infiniselect.InfiniSelect.authoritativeLocationCandidate(reference, uri)
 }
 
 private fun JSONObject.putNullable(key: String, value: Any?): JSONObject {

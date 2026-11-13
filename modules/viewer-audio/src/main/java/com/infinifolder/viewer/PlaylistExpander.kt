@@ -3,7 +3,6 @@ package com.infinifolder.viewer
 import android.content.Context
 import android.net.Uri
 import com.infinifolder.archive.ArchiveFormats
-import com.infinifolder.archive.ArchiveUri
 import com.infinifolder.model.ResourceEntry
 import com.infinifolder.audio.playlist.PlaylistParser
 import java.io.File
@@ -21,11 +20,7 @@ object PlaylistExpander {
     fun isPlaylist(uri: Uri, name: String? = null, mimeType: String? = null): Boolean {
         // A display name may be a user-defined shortcut title without an extension.
         // Keep it as a useful clue, but never let it hide the URI's actual file name.
-        val uriName = if (ArchiveUri.isArchiveUri(uri)) {
-            ArchiveUri.getEntryPath(uri).substringAfterLast('/')
-        } else {
-            uri.lastPathSegment.orEmpty()
-        }
+        val uriName = uri.lastPathSegment.orEmpty()
         val uriPathName = uri.path?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
         return sequenceOf(name, uriName, uriPathName)
             .filterNotNull()
@@ -35,8 +30,9 @@ object PlaylistExpander {
 
     /** Content sniffing is a bounded fallback for providers that omit a filename or MIME. */
     fun isPlaylist(context: Context, uri: Uri, name: String? = null, mimeType: String? = null): Boolean {
-        if (isPlaylist(uri, name, mimeType)) return true
-        val candidateName = name ?: uri.lastPathSegment.orEmpty()
+        val candidateName = name ?: io.github.gretchycat.infiniselect.InfiniSelect
+            .displayName(context, uri).orEmpty()
+        if (isPlaylist(uri, candidateName, mimeType)) return true
         return runCatching {
             val prefix = MediaSourceAdapter.readText(context, uri, maxBytes = 64 * 1024).first
             PlaylistParser.isPlaylist(candidateName, prefix)
@@ -73,193 +69,35 @@ object PlaylistExpander {
         com.infinifolder.storage.DiagnosticLog.record("audio.cddb.companion.resolve.failed", error = it)
     }.getOrNull()
 
-    fun resolveRelativePath(baseDir: String, relative: String): String {
-        val isAbsolute = baseDir.startsWith('/')
-        val segments = baseDir.replace('\\', '/').split('/').filter { it.isNotEmpty() }.toMutableList()
-        for (part in relative.replace('\\', '/').split('/')) {
-            when (part) {
-                "", "." -> Unit
-                ".." -> if (segments.isNotEmpty()) segments.removeAt(segments.lastIndex)
-                else -> segments.add(part)
+    private fun entryFileName(context: Context?, reference: String): String {
+        val parsed = runCatching { URI(reference.replace(" ", "%20")) }.getOrNull()
+        if (parsed?.isAbsolute == true) {
+            val uri = runCatching { uriFactory(parsed.toASCIIString()) }.getOrNull()
+            if (uri != null) {
+                val canonical = io.github.gretchycat.infiniselect.InfiniSelect.authoritativeUri(context, uri.toString()) ?: uri
+                io.github.gretchycat.infiniselect.InfiniSelect.displayName(context, canonical)?.let { return it }
             }
         }
-        return (if (isAbsolute) "/" else "") + segments.joinToString("/")
+        val path = parsed?.path ?: reference.substringBefore('?').substringBefore('#')
+        return URLDecoder.decode(path.substringAfterLast('/').substringAfterLast('\\')
+            .replace("+", "%2B"), Charsets.UTF_8.name())
     }
 
-    private fun decodeUriPath(value: String): String = runCatching {
-        URLDecoder.decode(value.replace("+", "%2B"), Charsets.UTF_8.name())
-    }.getOrDefault(value)
-
-    private fun entryFileName(reference: String): String {
-        val path = runCatching { URI(reference).path }.getOrNull()
-            ?: reference.substringBefore('?').substringBefore('#')
-        return decodeUriPath(path.substringAfterLast('/').substringAfterLast('\\'))
-    }
-
-    private fun fileUri(file: File): String = file.toURI().toString().replaceFirst("file:/", "file:///")
-
-    fun resolveEntryUri(context: Context?, playlistUri: Uri, pathOrUri: String): Uri {
-        val reference = pathOrUri.trim()
-        if (reference.isEmpty()) return uriFactory(playlistUri.toString())
-        val parsedReference = runCatching { URI(reference.replace(" ", "%20")) }.getOrNull()
-        if (parsedReference?.isAbsolute == true) return uriFactory(parsedReference.toASCIIString())
-        if (reference.startsWith("//")) {
-            val resolved = runCatching { URI(playlistUri.toString().replace(" ", "%20")).resolve(reference.replace(" ", "%20")).toString() }.getOrNull()
-            if (resolved != null) return uriFactory(resolved)
-        }
-        val pathOrUri = reference
-
-        if (ArchiveUri.isArchiveUri(playlistUri)) {
-            val entry = ArchiveUri.getEntryPath(playlistUri)
-            val relative = pathOrUri.replace('\\', '/')
-            val resolved = resolveRelativePath(if (relative.startsWith('/')) "" else entry.substringBeforeLast('/', ""), relative)
-            return ArchiveUri.build(ArchiveUri.getSourceUri(playlistUri), resolved,
-                deleted = ArchiveUri.isDeletedView(playlistUri))
-        }
-
-        if (pathOrUri.startsWith('/') && File(pathOrUri).exists()) {
-            return uriFactory(fileUri(File(pathOrUri)))
-        }
-
-        if (playlistUri.scheme == "file") {
-            val localFile = playlistUri.path?.let { File(it) }
-            if (localFile != null) {
-                val parent = localFile.parentFile ?: File(".")
-                val localReference = decodeUriPath(pathOrUri)
-                val target = File(parent, localReference).canonicalFile
-                if (target.exists()) return uriFactory(fileUri(target))
-
-                val sibling = File(parent, File(localReference).name).canonicalFile
-                if (sibling.exists()) return uriFactory(fileUri(sibling))
-
-                val parentParent = parent.parentFile
-                if (parentParent != null) {
-                    val audioSibling = File(parentParent, "audio/${File(localReference).name}").canonicalFile
-                    if (audioSibling.exists()) return uriFactory(fileUri(audioSibling))
-                }
-
-                val audioSub = File(parent, "audio/${File(localReference).name}").canonicalFile
-                if (audioSub.exists()) return uriFactory(fileUri(audioSub))
-
-                return uriFactory(fileUri(target))
-            }
-        }
-
-        if (playlistUri.scheme == "content") {
-            try {
-                val authority = playlistUri.authority
-                val isTree = (try { android.provider.DocumentsContract.isTreeUri(playlistUri) } catch (_: Throwable) { false }) ||
-                    playlistUri.pathSegments.firstOrNull() == "tree"
-                val isDocument = playlistUri.pathSegments.firstOrNull() == "document" ||
-                    playlistUri.pathSegments.getOrNull(2) == "document" ||
-                    (context != null && runCatching {
-                        android.provider.DocumentsContract.isDocumentUri(context, playlistUri)
-                    }.getOrDefault(false))
-                val docId = try {
-                    when {
-                        isDocument -> android.provider.DocumentsContract.getDocumentId(playlistUri)
-                        isTree -> android.provider.DocumentsContract.getTreeDocumentId(playlistUri)
-                        else -> null
-                    }
-                } catch (_: Throwable) { null }
-
-                // A content:// URI is not necessarily a SAF document. Do not invent
-                // DocumentsContract URIs for ordinary providers (FileProvider, app
-                // providers, etc.); those must resolve relative to their own URI below.
-                if (docId != null && (isTree || isDocument)) {
-                    val colonIdx = docId.indexOf(':')
-                    val prefix = if (colonIdx >= 0) docId.substring(0, colonIdx + 1) else ""
-                    val docPath = if (colonIdx >= 0) docId.substring(colonIdx + 1) else docId
-                    val parentDocPath = docPath.substringBeforeLast('/', "")
-                    val decodedReference = decodeUriPath(pathOrUri)
-                    val targetName = decodedReference.substringAfterLast('/').substringAfterLast('\\')
-
-                    val candidatePaths = listOfNotNull(
-                        resolveRelativePath(parentDocPath, decodedReference),
-                        resolveRelativePath(parentDocPath, targetName),
-                        if (parentDocPath.contains('/')) resolveRelativePath(parentDocPath.substringBeforeLast('/', ""), "audio/$targetName") else null,
-                        resolveRelativePath(parentDocPath, "audio/$targetName")
-                    ).distinct()
-
-                    for (candidate in candidatePaths) {
-                        val candidateDocId = prefix + candidate
-                        val targetSafUri = try {
-                            if (isTree) {
-                                android.provider.DocumentsContract.buildDocumentUriUsingTree(playlistUri, candidateDocId)
-                            } else if (authority != null) {
-                                android.provider.DocumentsContract.buildDocumentUri(authority, candidateDocId)
-                            } else null
-                        } catch (_: Throwable) { null }
-
-                        if (targetSafUri != null) {
-                            if (context != null) {
-                                val canOpen = try {
-                                    context.contentResolver.openInputStream(targetSafUri)?.use { true } ?: false
-                                } catch (_: Throwable) { false }
-                                if (canOpen) return targetSafUri
-                            } else {
-                                if (candidate == candidatePaths.first()) return targetSafUri
-                            }
-                        }
-                    }
-
-                    val primaryDocId = prefix + candidatePaths.first()
-                    val primarySafUri = try {
-                        if (isTree) {
-                            android.provider.DocumentsContract.buildDocumentUriUsingTree(playlistUri, primaryDocId)
-                        } else if (authority != null) {
-                            android.provider.DocumentsContract.buildDocumentUri(authority, primaryDocId)
-                        } else null
-                    } catch (_: Throwable) { null }
-                    // Preserve a best-effort URI only for callers without a Context.
-                    // With a Context, a failed open means the provider rejected this
-                    // sibling; do not fabricate a queue item that points nowhere.
-                    if (primarySafUri != null && context == null) return primarySafUri
-                }
-                if (isTree || isDocument) return Uri.EMPTY
-            } catch (_: Throwable) {}
-
-            val localFile = context?.let { runCatching { MediaSourceAdapter.resolveLocalFile(it, playlistUri) }.getOrNull() }
-            if (localFile != null) {
-                val parent = localFile.parentFile ?: File(".")
-                val localReference = decodeUriPath(pathOrUri)
-                val target = File(parent, localReference).canonicalFile
-                if (target.exists()) return uriFactory(fileUri(target))
-
-                val sibling = File(parent, File(localReference).name).canonicalFile
-                if (sibling.exists()) return uriFactory(fileUri(sibling))
-
-                val parentParent = parent.parentFile
-                if (parentParent != null) {
-                    val audioSibling = File(parentParent, "audio/${File(localReference).name}").canonicalFile
-                    if (audioSibling.exists()) return uriFactory(fileUri(audioSibling))
-                }
-
-                val audioSub = File(parent, "audio/${File(localReference).name}").canonicalFile
-                if (audioSub.exists()) return uriFactory(fileUri(audioSub))
-
-                return uriFactory(fileUri(target))
-            }
-        }
-
-        // Resolve against the playlist URI itself so ordinary content:// providers,
-        // HTTP locations, and non-DocumentsProvider references keep their authority.
-        val resolved = runCatching {
-            URI(playlistUri.toString().replace(" ", "%20")).resolve(reference.replace(" ", "%20")).toString()
-        }.getOrNull()
-        if (resolved != null) return uriFactory(resolved)
-        val uriPath = playlistUri.path ?: ""
-        val parentPath = uriPath.substringBeforeLast('/', "")
-        return runCatching { playlistUri.buildUpon().encodedPath(resolveRelativePath(parentPath, reference)).build() }
-            .getOrElse { uriFactory("${playlistUri.toString().substringBeforeLast('/')}/$reference") }
-    }
+    /** Compatibility wrapper; URI resolution belongs to libinfiniselect. */
+    fun resolveEntryUri(context: Context?, playlistUri: Uri, pathOrUri: String): Uri =
+        io.github.gretchycat.infiniselect.InfiniSelect.resolveRelativeLocationText(
+            context, playlistUri.toString(), pathOrUri)?.let { uriFactory(it) } ?: Uri.EMPTY
 
     fun expandPlaylist(
         context: Context?,
         playlistUri: Uri,
-        visited: MutableSet<String> = mutableSetOf()
+        visited: MutableSet<String> = mutableSetOf(),
+        authoritativePlaylistUri: Uri? = null,
     ): List<AudioTrack> {
-        val uriKey = playlistUri.toString()
+        val requestedPlaylistLocation = authoritativePlaylistUri ?: playlistUri
+        val playlistLocation = io.github.gretchycat.infiniselect.InfiniSelect.authoritativeUri(
+            context, requestedPlaylistLocation.toString()) ?: requestedPlaylistLocation
+        val uriKey = playlistLocation.toString()
         if (visited.contains(uriKey)) return emptyList()
         visited.add(uriKey)
 
@@ -267,8 +105,8 @@ object PlaylistExpander {
         var hasMoreText = false
         var playlistName = "playlist.m3u"
         try {
-            val name = if (ArchiveUri.isArchiveUri(playlistUri)) ArchiveUri.getEntryPath(playlistUri).substringAfterLast('/')
-                else playlistUri.lastPathSegment ?: "playlist.m3u"
+            val name = io.github.gretchycat.infiniselect.InfiniSelect.displayName(context, playlistLocation,
+                "playlist.m3u") ?: "playlist.m3u"
             playlistName = name
             val localFile = if (playlistUri.scheme == "file") {
                 playlistUri.path?.let { File(it) }
@@ -292,26 +130,36 @@ object PlaylistExpander {
             }
 
             for (entry in entries) {
-                val authoritativeSource = entry.sourceReference?.let {
-                    context?.let { appContext ->
-                        io.github.gretchycat.infiniselect.InfiniSelect.resolveSourceReference(appContext, it)
-                    }
-                }
-                val locationUri = resolveEntryUri(context, playlistUri, entry.pathOrUri)
-                val useAuthoritativeSource = authoritativeSource != null && authoritativeSource != locationUri &&
-                    isSourceAvailable(context, authoritativeSource)
-                val itemUri = if (useAuthoritativeSource) authoritativeSource!! else locationUri
-                val locationAvailable = useAuthoritativeSource || (isSourceAvailable(context, itemUri) &&
-                    (!itemUri.authority.orEmpty().endsWith(".selection", ignoreCase = true) ||
-                        isSelectionRelayAvailable(context, itemUri)))
-                if (itemUri == Uri.EMPTY || !locationAvailable) {
+                val locationUri = resolveEntryUri(context, playlistLocation, entry.pathOrUri)
+                val requestedSource = entry.sourceReference?.let {
+                    runCatching { Uri.parse(it) }.getOrNull()
+                } ?: locationUri
+                val canonicalSource = context?.let { appContext ->
+                    io.github.gretchycat.infiniselect.InfiniSelect.authoritativeUri(appContext,
+                        requestedSource.toString())
+                } ?: requestedSource
+                if (locationUri == Uri.EMPTY || canonicalSource == Uri.EMPTY ||
+                    io.github.gretchycat.infiniselect.InfiniSelect.isTemporaryAccessUri(canonicalSource)) {
                     missingSources++
                     continue
                 }
-                val itemName = entryFileName(entry.pathOrUri)
-                if (isPlaylist(itemUri, itemName)) {
+                val itemName = entryFileName(context, canonicalSource.toString()).ifBlank {
+                    entryFileName(context, entry.pathOrUri)
+                }
+                if (isPlaylist(itemName, entry.mimeType.orEmpty())) {
                     // Recursive expansion for nested playlists
-                    val nestedTracks = expandPlaylist(context, itemUri, visited)
+                    val nestedAccess = context?.let { appContext ->
+                        io.github.gretchycat.infiniselect.InfiniSelect.resolveSource(
+                            appContext, canonicalSource.toString(), itemName, entry.mimeType)
+                    }
+                    val nestedContentUri = nestedAccess?.contentUri
+                        ?: canonicalSource.takeIf { it.scheme.equals("file", true) }
+                    if (nestedContentUri == null) {
+                        missingSources++
+                        continue
+                    }
+                    val nestedTracks = expandPlaylist(context, nestedContentUri, visited,
+                        authoritativePlaylistUri = nestedAccess?.authoritativeUri ?: canonicalSource)
                     tracks.addAll(nestedTracks)
                 } else {
                     val title = entry.title.ifBlank { itemName }
@@ -331,7 +179,9 @@ object PlaylistExpander {
                     }
                     tracks.add(
                         AudioTrack(
-                            uri = itemUri,
+                            // Keep the backend address in the queue. The player asks
+                            // InfiniSelect for a content URI only when this item is used.
+                            uri = canonicalSource,
                             title = title,
                             fileName = itemName,
                             artist = entry.performer.ifBlank { null },
@@ -340,20 +190,20 @@ object PlaylistExpander {
                             startByte = entry.startByte,
                             lengthBytes = entry.lengthBytes,
                             decoderExtension = entry.decoderExtension,
-                            sourceReference = entry.sourceReference ?: authoritativeSource?.toString(),
-                            directoryUri = entry.directoryReference?.let { reference ->
-                                context?.let { appContext ->
-                                    io.github.gretchycat.infiniselect.InfiniSelect.resolveSourceReference(appContext, reference)
-                                }
-                            } ?: entry.directoryUri?.let(Uri::parse),
+                            sourceReference = canonicalSource.toString(),
+                            directoryUri = entry.directoryReference?.let(Uri::parse)
+                                ?: entry.directoryUri?.let(Uri::parse),
                             directoryName = entry.directoryName,
-                            directoryReference = entry.directoryReference,
-                            directoryCoverUri = entry.directoryCoverReference?.let { reference ->
-                                context?.let { appContext ->
-                                    io.github.gretchycat.infiniselect.InfiniSelect.resolveSourceReference(appContext, reference)
-                                }
-                            } ?: entry.directoryCoverUri?.let(Uri::parse),
-                            directoryCoverReference = entry.directoryCoverReference,
+                            directoryReference = entry.directoryReference?.let { reference ->
+                                context?.let { appContext -> io.github.gretchycat.infiniselect.InfiniSelect
+                                    .authoritativeUri(appContext, reference)?.toString() }
+                            } ?: entry.directoryReference,
+                            directoryCoverUri = entry.directoryCoverReference?.let(Uri::parse)
+                                ?: entry.directoryCoverUri?.let(Uri::parse),
+                            directoryCoverReference = entry.directoryCoverReference?.let { reference ->
+                                context?.let { appContext -> io.github.gretchycat.infiniselect.InfiniSelect
+                                    .authoritativeUri(appContext, reference)?.toString() }
+                            } ?: entry.directoryCoverReference,
                             directoryArtworkMetadataResolved = entry.directoryArtworkMetadataResolved,
                             mediaKind = mediaKind,
                             sourceMimeType = entry.mimeType
@@ -394,11 +244,6 @@ object PlaylistExpander {
 
     private fun isSourceAvailable(context: Context?, uri: Uri): Boolean {
         if (context == null) return true
-        // InfiniFolder selection relays are emitted into a generated playlist
-        // only after the storage provider returned them. Avoid an extra provider
-        // IPC for every track; playback reports an expired relay on actual open.
-        if (uri.scheme.equals("content", ignoreCase = true) &&
-            uri.authority?.endsWith(".selection", ignoreCase = true) == true) return true
         return when (uri.scheme?.lowercase()) {
             "file" -> uri.path?.let { File(it).isFile && File(it).canRead() } == true
             "content" -> {
@@ -424,15 +269,6 @@ object PlaylistExpander {
         }
     }
 
-    /** Only probe short-lived relays when their stable reference was unavailable. */
-    private fun isSelectionRelayAvailable(context: Context?, uri: Uri): Boolean {
-        if (context == null) return true
-        return runCatching {
-            context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
-                null, null, null)?.use { it.moveToFirst() } == true
-        }.getOrDefault(false)
-    }
-
     fun expandResourceEntries(
         context: Context?,
         entries: List<ResourceEntry>,
@@ -442,8 +278,19 @@ object PlaylistExpander {
         val tracks = mutableListOf<AudioTrack>()
         for (entry in entries) {
             if (entry.metadata.isDirectory) continue
+            val authoritativeUri = context?.let { appContext ->
+                io.github.gretchycat.infiniselect.InfiniSelect.authoritativeUri(appContext, entry.uri.toString())
+            } ?: entry.uri
+            if (io.github.gretchycat.infiniselect.InfiniSelect.isTemporaryAccessUri(authoritativeUri)) continue
             if (isPlaylist(entry.uri, entry.metadata.name, entry.metadata.mimeType)) {
-                val playlistTracks = expandPlaylist(context, entry.uri, visited)
+                val access = context?.let { appContext -> io.github.gretchycat.infiniselect.InfiniSelect.resolveSource(
+                    appContext, authoritativeUri.toString(), entry.metadata.name,
+                    entry.metadata.mimeType, entry.metadata.sizeBytes) }
+                val playlistContentUri = access?.contentUri
+                    ?: authoritativeUri.takeIf { it.scheme.equals("file", true) }
+                if (playlistContentUri == null) continue
+                val playlistTracks = expandPlaylist(context, playlistContentUri, visited,
+                    authoritativePlaylistUri = access?.authoritativeUri ?: authoritativeUri)
                 tracks.addAll(playlistTracks)
             } else {
                 val type = MediaTypeDetector.detect(entry.metadata.name, entry.metadata.mimeType)
@@ -453,7 +300,8 @@ object PlaylistExpander {
                         MediaType.VIDEO -> PlaylistMediaKind.VIDEO
                         else -> PlaylistMediaKind.AUDIO
                     }
-                    tracks.add(AudioTrack(entry.uri, entry.metadata.name, fileName = entry.metadata.name,
+                    tracks.add(AudioTrack(authoritativeUri, entry.metadata.name, fileName = entry.metadata.name,
+                        sourceReference = authoritativeUri.toString(),
                         mediaKind = kind, sourceMimeType = entry.metadata.mimeType))
                 }
             }

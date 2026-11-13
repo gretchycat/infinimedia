@@ -11,6 +11,16 @@ not include Infinifolder's remote clients, torrent engine or virtual filesystem
 implementation. The small shared UI and resource-support libraries adapt content
 URIs without depending on another application's source.
 
+## Storage identities and playlists
+
+InfiniMedia keeps each resource's authoritative URI separate from its current
+Android content URI. The authoritative URI is used in queue snapshots and saved
+playlists; the content URI is resolved lazily through libinfiniselect when the
+player needs bytes. Relative playlist entries resolve against the playlist's
+authoritative location. Remote, archive and filesystem-image URI syntax stays
+inside the storage libraries and InfiniFolder's IPC provider. Expiring Folder
+relay links are never written into playlists.
+
 ## ANSI art and ANSI Music
 
 `.ans` and `.ansi` files can be queued alongside audio, images and video. InfiniMedia

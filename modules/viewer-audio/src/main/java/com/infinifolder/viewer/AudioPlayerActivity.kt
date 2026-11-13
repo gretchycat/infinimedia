@@ -50,9 +50,11 @@ import io.github.gretchycat.infinivideo.VideoCapabilities
 import io.github.gretchycat.infinivideo.VideoPlayback
 import io.github.gretchycat.infinivideo.VideoSurfacePlayback
 import io.github.gretchycat.infiniselect.InfiniSelect
+import io.github.gretchycat.infiniselect.FileSelectionContract
 import io.github.gretchycat.infiniselect.MultipleSelectionDelivery
 import io.github.gretchycat.infiniselect.OpenRequest
 import io.github.gretchycat.infiniselect.SelectionMetadataFormat
+import io.github.gretchycat.infiniselect.SelectionItem
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -399,8 +401,46 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private fun handleIntent(intent: Intent?) {
         retainPersistableReadGrants(intent)
-        val targetUri = intent?.data ?: intent?.getStringExtra("uri")?.let { Uri.parse(it) }
-        if (targetUri == null) {
+        if (intent?.action == Intent.ACTION_SEND_MULTIPLE) {
+            val streams = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM).orEmpty()
+            if (streams.isNotEmpty()) {
+                val authoritative = intent.getStringArrayListExtra(FileSelectionContract.EXTRA_RESULT_AUTHORITATIVE_URIS)
+                    ?: intent.getStringArrayListExtra(FileSelectionContract.EXTRA_RESULT_SOURCE_REFERENCES).orEmpty()
+                val names = intent.getStringArrayListExtra(FileSelectionContract.EXTRA_RESULT_NAMES).orEmpty()
+                val mimes = intent.getStringArrayListExtra(FileSelectionContract.EXTRA_RESULT_MIMES).orEmpty()
+                val items = streams.mapIndexed { index, contentUri ->
+                    val identity = authoritative.getOrNull(index)?.takeIf(String::isNotBlank)
+                        ?: InfiniSelect.authoritativeCandidate(null, contentUri)?.toString()
+                        ?: throw IllegalArgumentException("A selected media item is missing its authoritative URI")
+                    val queriedName = runCatching {
+                        contentResolver.query(contentUri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                            null, null, null)?.use { cursor ->
+                            if (!cursor.moveToFirst()) null else cursor.getString(0)
+                        }
+                    }.getOrNull()
+                    SelectionItem(
+                        uri = contentUri,
+                        name = names.getOrNull(index)?.takeIf(String::isNotBlank)
+                            ?: queriedName ?: contentUri.lastPathSegment.orEmpty(),
+                        mimeType = mimes.getOrNull(index)?.takeIf(String::isNotBlank)
+                            ?: contentResolver.getType(contentUri) ?: "application/octet-stream",
+                        sourceReference = identity,
+                    )
+                }
+                val playlist = InfiniSelect.createJspfPlaylist(this, items, "Selection.jspf")
+                val generated = Intent(intent).apply {
+                    action = Intent.ACTION_VIEW
+                    setDataAndType(playlist, InfiniSelect.JSPF_MIME)
+                    putExtra("displayName", "Selection.jspf")
+                    putExtra("mimeType", InfiniSelect.JSPF_MIME)
+                    putExtra(FileSelectionContract.EXTRA_RESULT_AUTHORITATIVE_URI, playlist.toString())
+                }
+                handleIntent(generated)
+                return
+            }
+        }
+        val requestedUri = intent?.data ?: intent?.getStringExtra("uri")?.let { Uri.parse(it) }
+        if (requestedUri == null) {
             val restoreIntent = Intent(this, AudioPlayerService::class.java).apply {
                 action = AudioPlayerService.ACTION_RESTORE
             }
@@ -408,8 +448,25 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             else startService(restoreIntent)
             return
         }
+        val requestedReference = intent?.getStringExtra(FileSelectionContract.EXTRA_RESULT_AUTHORITATIVE_URI)
+            ?: intent?.getStringArrayListExtra(FileSelectionContract.EXTRA_RESULT_AUTHORITATIVE_URIS)?.firstOrNull()
+            ?: intent?.getStringArrayListExtra(FileSelectionContract.EXTRA_RESULT_SOURCE_REFERENCES)?.firstOrNull()
+            ?: requestedUri.toString()
+        val requestedName = intent?.getStringExtra("displayName") ?: requestedUri.lastPathSegment ?: "Audio Track"
+        val requestedMime = intent?.getStringExtra("mimeType") ?: intent?.type
+        val resolvedTarget = InfiniSelect.resolveSource(this, requestedReference, requestedName, requestedMime)
+        val authoritativeTarget = resolvedTarget?.authoritativeUri
+            ?: InfiniSelect.authoritativeUri(this, requestedReference)
+            ?: InfiniSelect.authoritativeCandidate(null, requestedUri)
+        val targetUri = resolvedTarget?.contentUri ?: requestedUri.takeIf {
+            it.scheme.equals("content", true)
+        }
+        if (authoritativeTarget == null || targetUri == null) {
+            Toast.makeText(this, "This storage location is not currently available", Toast.LENGTH_SHORT).show()
+            return
+        }
         val generation = playlistLoadGeneration.incrementAndGet()
-        val displayName = intent?.getStringExtra("displayName") ?: targetUri.lastPathSegment ?: "Audio Track"
+        val displayName = requestedName
 
         val serviceIntent = Intent(this, AudioPlayerService::class.java).apply {
             action = AudioPlayerService.ACTION_LOAD
@@ -418,6 +475,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             putExtra("uri", targetUri.toString())
             putExtra("name", displayName)
             putExtra("mimeType", intent?.getStringExtra("mimeType") ?: intent?.type)
+            putExtra(FileSelectionContract.EXTRA_RESULT_AUTHORITATIVE_URI, authoritativeTarget.toString())
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent)
@@ -431,7 +489,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             val isDirectPlaylist = PlaylistExpander.isPlaylist(this, targetUri, displayName, playlistMime)
 
             if (isDirectPlaylist) {
-                val playlistTracks = PlaylistExpander.expandPlaylist(this, targetUri)
+                val playlistTracks = PlaylistExpander.expandPlaylist(this, targetUri,
+                    authoritativePlaylistUri = authoritativeTarget)
                 tracks.addAll(playlistTracks)
             } else {
                 val parentUri = intent?.getStringExtra("parentUri")?.let { Uri.parse(it) }
@@ -454,13 +513,14 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 }
             }
 
-            if (tracks.none { AudioPlayerService.uriMatches(it.uri, targetUri) }) {
+            if (tracks.none { it.authoritativeUri == authoritativeTarget }) {
                 if (!isDirectPlaylist) {
-                    tracks.add(0, AudioTrack(targetUri, displayName))
+                    tracks.add(0, AudioTrack(targetUri, displayName,
+                        sourceReference = authoritativeTarget.toString()))
                 }
             }
 
-            var startIndex = tracks.indexOfFirst { AudioPlayerService.uriMatches(it.uri, targetUri) }
+            var startIndex = tracks.indexOfFirst { it.authoritativeUri == authoritativeTarget }
             if (startIndex < 0) startIndex = 0
             if (generation != playlistLoadGeneration.get()) return@Thread
 
@@ -478,7 +538,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                         }
                         return
                     }
-                    val isSameTrack = AudioPlayerService.uriMatches(service.currentTrack?.uri, targetUri)
+                    val isSameTrack = service.currentTrack?.authoritativeUri == authoritativeTarget
                     // The service may still regard the playlist document itself as
                     // current (for example when its URI had no useful extension and
                     // only the Activity's content sniff identified XSPF). Replacing
@@ -635,15 +695,15 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val flags = source.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         if (flags == 0) return
         val uris = linkedSetOf<Uri>()
-        source.data?.takeUnless { it.authority.orEmpty().endsWith(".selection", ignoreCase = true) }?.let(uris::add)
+        source.data?.takeUnless(InfiniSelect::isTemporaryAccessUri)?.let(uris::add)
         source.clipData?.let { clip ->
             for (index in 0 until clip.itemCount) clip.getItemAt(index).uri
-                ?.takeUnless { it.authority.orEmpty().endsWith(".selection", ignoreCase = true) }
+                ?.takeUnless(InfiniSelect::isTemporaryAccessUri)
                 ?.let(uris::add)
         }
         source.getStringArrayListExtra(io.github.gretchycat.infiniselect.FileSelectionContract.EXTRA_RESULT_URIS)
             ?.mapNotNullTo(uris) { runCatching { Uri.parse(it) }.getOrNull() }
-        uris.removeAll { it.authority.orEmpty().endsWith(".selection", ignoreCase = true) }
+        uris.removeAll(InfiniSelect::isTemporaryAccessUri)
         uris.forEach { uri -> runCatching { contentResolver.takePersistableUriPermission(uri, flags) } }
     }
 
@@ -758,7 +818,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                     setPlaylistUiLoadStage(loadId, "Reading playlist document…", "phase=expand-playlist")
                     val expansionStartedAt = android.os.SystemClock.elapsedRealtime()
                     playlistItemsFound = 1
-                    tracks += PlaylistExpander.expandPlaylist(this, selectedPlaylist)
+                    tracks += PlaylistExpander.expandPlaylist(this, selectedPlaylist,
+                        authoritativePlaylistUri = items.firstOrNull()?.authoritativeUri)
                     playlistExpansionElapsedMs = android.os.SystemClock.elapsedRealtime() - expansionStartedAt
                     com.infinifolder.storage.DiagnosticLog.record(
                         "audio.playlist.prepare.playlist-expanded",
@@ -774,7 +835,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                     val orderedItems = if (recursive) {
                         items.sortedWith(compareBy<io.github.gretchycat.infiniselect.SelectionItem>(
                             { it.directoryName.orEmpty().lowercase(Locale.ROOT) },
-                            { it.directoryUri?.toString().orEmpty() },
+                            { it.directoryReference ?: it.directoryUri?.toString().orEmpty() },
                             { it.name.lowercase(Locale.ROOT) },
                             { it.name },
                         ))
@@ -796,7 +857,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                             playlistItemsFound++
                             val before = tracks.size
                             val expansionStartedAt = android.os.SystemClock.elapsedRealtime()
-                            tracks += PlaylistExpander.expandPlaylist(this, item.uri)
+                            tracks += PlaylistExpander.expandPlaylist(this, item.uri,
+                                authoritativePlaylistUri = item.authoritativeUri)
                             val expansionElapsedMs = android.os.SystemClock.elapsedRealtime() - expansionStartedAt
                             playlistExpansionElapsedMs += expansionElapsedMs
                             com.infinifolder.storage.DiagnosticLog.record(
@@ -811,11 +873,10 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                                     else -> PlaylistMediaKind.AUDIO
                                 }
                             }
-                            val sourceReference = item.sourceReference ?: item.uri.toString()
-                            val sourceUri = InfiniSelect.resolveSourceReference(this, sourceReference) ?: item.uri
+                            val sourceReference = item.authoritativeUri.toString()
+                            val sourceUri = item.contentUri
                             val coverReference = item.directoryCoverReference
-                            val coverUri = coverReference?.let { InfiniSelect.resolveSourceReference(this, it) }
-                                ?: item.directoryCoverUri
+                            val coverUri = item.directoryCoverUri
                             tracks += AudioTrack(uri = sourceUri, title = item.name, fileName = item.name,
                                 sourceReference = sourceReference,
                                 directoryUri = item.directoryUri, directoryName = item.directoryName,
