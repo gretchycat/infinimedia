@@ -67,7 +67,11 @@ data class AudioTrack(
     /** True when recursive selection already checked the directory for a cover URI. */
     val directoryArtworkMetadataResolved: Boolean = false,
     val mediaKind: PlaylistMediaKind = PlaylistMediaKind.AUDIO,
-    val sourceMimeType: String? = null
+    val sourceMimeType: String? = null,
+    /** Stable source identity that can replace a temporary selection URI later. */
+    val sourceReference: String? = null,
+    val directoryReference: String? = null,
+    val directoryCoverReference: String? = null
 )
 
 internal data class CastPlaylistSelection(val playlistIndex: Int, val track: AudioTrack)

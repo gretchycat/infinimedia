@@ -292,8 +292,19 @@ object PlaylistExpander {
             }
 
             for (entry in entries) {
-                val itemUri = resolveEntryUri(context, playlistUri, entry.pathOrUri)
-                if (itemUri == Uri.EMPTY || !isSourceAvailable(context, itemUri)) {
+                val authoritativeSource = entry.sourceReference?.let {
+                    context?.let { appContext ->
+                        io.github.gretchycat.infiniselect.InfiniSelect.resolveSourceReference(appContext, it)
+                    }
+                }
+                val locationUri = resolveEntryUri(context, playlistUri, entry.pathOrUri)
+                val useAuthoritativeSource = authoritativeSource != null && authoritativeSource != locationUri &&
+                    isSourceAvailable(context, authoritativeSource)
+                val itemUri = if (useAuthoritativeSource) authoritativeSource!! else locationUri
+                val locationAvailable = useAuthoritativeSource || (isSourceAvailable(context, itemUri) &&
+                    (!itemUri.authority.orEmpty().endsWith(".selection", ignoreCase = true) ||
+                        isSelectionRelayAvailable(context, itemUri)))
+                if (itemUri == Uri.EMPTY || !locationAvailable) {
                     missingSources++
                     continue
                 }
@@ -329,9 +340,20 @@ object PlaylistExpander {
                             startByte = entry.startByte,
                             lengthBytes = entry.lengthBytes,
                             decoderExtension = entry.decoderExtension,
-                            directoryUri = entry.directoryUri?.let(Uri::parse),
+                            sourceReference = entry.sourceReference ?: authoritativeSource?.toString(),
+                            directoryUri = entry.directoryReference?.let { reference ->
+                                context?.let { appContext ->
+                                    io.github.gretchycat.infiniselect.InfiniSelect.resolveSourceReference(appContext, reference)
+                                }
+                            } ?: entry.directoryUri?.let(Uri::parse),
                             directoryName = entry.directoryName,
-                            directoryCoverUri = entry.directoryCoverUri?.let(Uri::parse),
+                            directoryReference = entry.directoryReference,
+                            directoryCoverUri = entry.directoryCoverReference?.let { reference ->
+                                context?.let { appContext ->
+                                    io.github.gretchycat.infiniselect.InfiniSelect.resolveSourceReference(appContext, reference)
+                                }
+                            } ?: entry.directoryCoverUri?.let(Uri::parse),
+                            directoryCoverReference = entry.directoryCoverReference,
                             directoryArtworkMetadataResolved = entry.directoryArtworkMetadataResolved,
                             mediaKind = mediaKind,
                             sourceMimeType = entry.mimeType
@@ -400,6 +422,15 @@ object PlaylistExpander {
             }
             else -> true
         }
+    }
+
+    /** Only probe short-lived relays when their stable reference was unavailable. */
+    private fun isSelectionRelayAvailable(context: Context?, uri: Uri): Boolean {
+        if (context == null) return true
+        return runCatching {
+            context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                null, null, null)?.use { it.moveToFirst() } == true
+        }.getOrDefault(false)
     }
 
     fun expandResourceEntries(

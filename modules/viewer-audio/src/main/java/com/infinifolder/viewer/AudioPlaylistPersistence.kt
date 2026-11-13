@@ -17,6 +17,7 @@ internal data class SavedAudioPlaylist(
 
 /** Durable app-private snapshot of InfiniMedia's active queue. Bitmaps are regenerated from sources. */
 internal class AudioPlaylistStore(context: Context) {
+    private val appContext = context.applicationContext
     private val file = AtomicFile(File(context.filesDir, "working-audio-playlist.json"))
 
     @Synchronized
@@ -77,9 +78,12 @@ internal class AudioPlaylistStore(context: Context) {
             .put("fileName", track.fileName)
             .put("isUnreadable", track.isUnreadable)
             .putNullable("decoderExtension", track.decoderExtension)
+            .putNullable("sourceReference", track.sourceReference)
             .putNullable("directoryCoverUri", track.directoryCoverUri?.toString())
+            .putNullable("directoryCoverReference", track.directoryCoverReference)
             .putNullable("directoryUri", track.directoryUri?.toString())
             .putNullable("directoryName", track.directoryName)
+            .putNullable("directoryReference", track.directoryReference)
             .put("directoryArtworkMetadataResolved", track.directoryArtworkMetadataResolved)
             .put("mediaKind", track.mediaKind.name)
             .putNullable("sourceMimeType", track.sourceMimeType))
@@ -90,8 +94,15 @@ internal class AudioPlaylistStore(context: Context) {
         for (index in 0 until array.length()) {
             val item = array.optJSONObject(index) ?: continue
             val uri = item.optString("uri").takeIf(String::isNotBlank)?.let(Uri::parse) ?: continue
+            val sourceReference = item.stringOrNull("sourceReference")
+            val restoredUri = refreshExpiredSelectionUri(uri, sourceReference) ?: uri
+            val directoryCoverUri = item.stringOrNull("directoryCoverUri")?.let(Uri::parse)
+            val directoryCoverReference = item.stringOrNull("directoryCoverReference")
+            val restoredDirectoryCover = directoryCoverUri?.let {
+                refreshExpiredSelectionUri(it, directoryCoverReference) ?: it
+            }
             add(AudioTrack(
-                uri = uri,
+                uri = restoredUri,
                 title = item.optString("title").ifBlank { item.optString("fileName", "Audio Track") },
                 artist = item.stringOrNull("artist"),
                 album = item.stringOrNull("album"),
@@ -105,15 +116,24 @@ internal class AudioPlaylistStore(context: Context) {
                 fileName = item.optString("fileName").ifBlank { item.optString("title", "Audio Track") },
                 isUnreadable = item.optBoolean("isUnreadable", false),
                 decoderExtension = item.stringOrNull("decoderExtension"),
-                directoryCoverUri = item.stringOrNull("directoryCoverUri")?.let(Uri::parse),
+                sourceReference = sourceReference,
+                directoryCoverUri = restoredDirectoryCover,
+                directoryCoverReference = directoryCoverReference,
                 directoryUri = item.stringOrNull("directoryUri")?.let(Uri::parse),
                 directoryName = item.stringOrNull("directoryName"),
+                directoryReference = item.stringOrNull("directoryReference"),
                 directoryArtworkMetadataResolved = item.optBoolean("directoryArtworkMetadataResolved", false),
                 mediaKind = runCatching { PlaylistMediaKind.valueOf(item.optString("mediaKind", "AUDIO")) }
                     .getOrDefault(PlaylistMediaKind.AUDIO),
                 sourceMimeType = item.stringOrNull("sourceMimeType")
             ))
         }
+    }
+
+    private fun refreshExpiredSelectionUri(uri: Uri, reference: String?): Uri? {
+        if (!uri.authority.orEmpty().endsWith(".selection", ignoreCase = true)) return null
+        return io.github.gretchycat.infiniselect.InfiniSelect.resolveSourceReference(appContext, reference)
+            ?.takeIf { it != uri }
     }
 
     companion object {
@@ -137,12 +157,15 @@ internal object AudioPlaylistJspf {
             val extension = JSONObject()
                 .put("mimeType", track.sourceMimeType ?: mimeForName(track.fileName))
                 .put("mediaKind", track.mediaKind.name.lowercase())
+                .put("sourceReference", track.sourceReference ?: track.uri.toString())
             track.startByte.takeIf { it > 0L }?.let { extension.put("startByte", it) }
             track.lengthBytes.takeIf { it >= 0L }?.let { extension.put("lengthBytes", it) }
             track.decoderExtension?.takeIf(String::isNotBlank)?.let { extension.put("decoderExtension", it) }
             track.directoryUri?.let { extension.put("directoryUri", it.toString()) }
             track.directoryName?.takeIf(String::isNotBlank)?.let { extension.put("directoryName", it) }
+            track.directoryReference?.let { extension.put("directoryReference", it) }
             track.directoryCoverUri?.let { extension.put("directoryCoverUri", it.toString()) }
+            track.directoryCoverReference?.let { extension.put("directoryCoverReference", it) }
             extension.put("directoryArtworkMetadataResolved", track.directoryArtworkMetadataResolved)
             item.put("extension", JSONObject().put("io.github.gretchycat.infiniselect", extension))
             items.put(item)

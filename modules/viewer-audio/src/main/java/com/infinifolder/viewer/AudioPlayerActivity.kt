@@ -635,10 +635,15 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val flags = source.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         if (flags == 0) return
         val uris = linkedSetOf<Uri>()
-        source.data?.let(uris::add)
-        source.clipData?.let { clip -> for (index in 0 until clip.itemCount) clip.getItemAt(index).uri?.let(uris::add) }
+        source.data?.takeUnless { it.authority.orEmpty().endsWith(".selection", ignoreCase = true) }?.let(uris::add)
+        source.clipData?.let { clip ->
+            for (index in 0 until clip.itemCount) clip.getItemAt(index).uri
+                ?.takeUnless { it.authority.orEmpty().endsWith(".selection", ignoreCase = true) }
+                ?.let(uris::add)
+        }
         source.getStringArrayListExtra(io.github.gretchycat.infiniselect.FileSelectionContract.EXTRA_RESULT_URIS)
             ?.mapNotNullTo(uris) { runCatching { Uri.parse(it) }.getOrNull() }
+        uris.removeAll { it.authority.orEmpty().endsWith(".selection", ignoreCase = true) }
         uris.forEach { uri -> runCatching { contentResolver.takePersistableUriPermission(uri, flags) } }
     }
 
@@ -806,9 +811,17 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                                     else -> PlaylistMediaKind.AUDIO
                                 }
                             }
-                            tracks += AudioTrack(uri = item.uri, title = item.name, fileName = item.name,
+                            val sourceReference = item.sourceReference ?: item.uri.toString()
+                            val sourceUri = InfiniSelect.resolveSourceReference(this, sourceReference) ?: item.uri
+                            val coverReference = item.directoryCoverReference
+                            val coverUri = coverReference?.let { InfiniSelect.resolveSourceReference(this, it) }
+                                ?: item.directoryCoverUri
+                            tracks += AudioTrack(uri = sourceUri, title = item.name, fileName = item.name,
+                                sourceReference = sourceReference,
                                 directoryUri = item.directoryUri, directoryName = item.directoryName,
-                                directoryCoverUri = item.directoryCoverUri,
+                                directoryReference = item.directoryReference,
+                                directoryCoverUri = coverUri,
+                                directoryCoverReference = coverReference,
                                 directoryArtworkMetadataResolved = item.directoryArtworkMetadataResolved,
                                 mediaKind = kind, sourceMimeType = item.mimeType)
                         }
