@@ -63,31 +63,36 @@ internal class AudioPlaylistStore(context: Context) {
     fun clear() = file.delete()
 
     private fun writeTracks(tracks: List<AudioTrack>): JSONArray = JSONArray().apply {
-        tracks.forEach { track -> put(JSONObject()
-            .put("uri", track.uri.toString())
-            .put("title", track.title)
-            .putNullable("artist", track.artist)
-            .putNullable("album", track.album)
-            .put("durationMs", track.durationMs)
-            .put("startByte", track.startByte)
-            .put("lengthBytes", track.lengthBytes)
-            .putNullable("bitrateKbps", track.bitrateKbps)
-            .putNullable("sampleRateHz", track.sampleRateHz)
-            .putNullable("channels", track.channels)
-            .put("isBitrateRelevant", track.isBitrateRelevant)
-            .put("fileName", track.fileName)
-            .put("isUnreadable", track.isUnreadable)
-            .putNullable("decoderExtension", track.decoderExtension)
-            .putNullable("sourceReference", track.sourceReference)
-            .putNullable("directoryCoverUri", track.directoryCoverUri?.toString())
-            .putNullable("directoryCoverReference", track.directoryCoverReference)
-            .putNullable("directoryUri", track.directoryUri?.toString())
-            .putNullable("directoryName", track.directoryName)
-            .putNullable("directoryReference", track.directoryReference)
-            .put("directoryArtworkMetadataResolved", track.directoryArtworkMetadataResolved)
-            .put("mediaKind", track.mediaKind.name)
-            .putNullable("sourceMimeType", track.sourceMimeType))
-    } }
+        tracks.forEach { track ->
+            val sourceLocation = AudioPlaylistLocations.authoritative(track.uri, track.sourceReference)
+            val directoryLocation = AudioPlaylistLocations.authoritative(track.directoryUri, track.directoryReference)
+            val coverLocation = AudioPlaylistLocations.authoritative(track.directoryCoverUri, track.directoryCoverReference)
+            put(JSONObject()
+                .put("uri", sourceLocation)
+                .put("title", track.title)
+                .putNullable("artist", track.artist)
+                .putNullable("album", track.album)
+                .put("durationMs", track.durationMs)
+                .put("startByte", track.startByte)
+                .put("lengthBytes", track.lengthBytes)
+                .putNullable("bitrateKbps", track.bitrateKbps)
+                .putNullable("sampleRateHz", track.sampleRateHz)
+                .putNullable("channels", track.channels)
+                .put("isBitrateRelevant", track.isBitrateRelevant)
+                .put("fileName", track.fileName)
+                .put("isUnreadable", track.isUnreadable)
+                .putNullable("decoderExtension", track.decoderExtension)
+                .putNullable("sourceReference", sourceLocation)
+                .putNullable("directoryCoverUri", coverLocation)
+                .putNullable("directoryCoverReference", coverLocation)
+                .putNullable("directoryUri", directoryLocation)
+                .putNullable("directoryName", track.directoryName)
+                .putNullable("directoryReference", directoryLocation)
+                .put("directoryArtworkMetadataResolved", track.directoryArtworkMetadataResolved)
+                .put("mediaKind", track.mediaKind.name)
+                .putNullable("sourceMimeType", track.sourceMimeType))
+        }
+    }
 
     private fun readTracks(array: JSONArray?): List<AudioTrack> = buildList {
         if (array == null) return@buildList
@@ -148,8 +153,12 @@ internal object AudioPlaylistJspf {
     fun encode(tracks: List<AudioTrack>, title: String): ByteArray {
         val items = JSONArray()
         tracks.forEach { track ->
+            val sourceLocation = AudioPlaylistLocations.authoritative(track.uri, track.sourceReference)
+                ?: track.uri.toString()
+            val directoryLocation = AudioPlaylistLocations.authoritative(track.directoryUri, track.directoryReference)
+            val coverLocation = AudioPlaylistLocations.authoritative(track.directoryCoverUri, track.directoryCoverReference)
             val item = JSONObject()
-                .put("location", track.uri.toString())
+                .put("location", sourceLocation)
                 .put("title", track.title)
             track.artist?.takeIf(String::isNotBlank)?.let { item.put("creator", it) }
             track.album?.takeIf(String::isNotBlank)?.let { item.put("album", it) }
@@ -157,15 +166,15 @@ internal object AudioPlaylistJspf {
             val extension = JSONObject()
                 .put("mimeType", track.sourceMimeType ?: mimeForName(track.fileName))
                 .put("mediaKind", track.mediaKind.name.lowercase())
-                .put("sourceReference", track.sourceReference ?: track.uri.toString())
+                .put("sourceReference", sourceLocation)
             track.startByte.takeIf { it > 0L }?.let { extension.put("startByte", it) }
             track.lengthBytes.takeIf { it >= 0L }?.let { extension.put("lengthBytes", it) }
             track.decoderExtension?.takeIf(String::isNotBlank)?.let { extension.put("decoderExtension", it) }
-            track.directoryUri?.let { extension.put("directoryUri", it.toString()) }
+            directoryLocation?.let { extension.put("directoryUri", it) }
             track.directoryName?.takeIf(String::isNotBlank)?.let { extension.put("directoryName", it) }
-            track.directoryReference?.let { extension.put("directoryReference", it) }
-            track.directoryCoverUri?.let { extension.put("directoryCoverUri", it.toString()) }
-            track.directoryCoverReference?.let { extension.put("directoryCoverReference", it) }
+            directoryLocation?.let { extension.put("directoryReference", it) }
+            coverLocation?.let { extension.put("directoryCoverUri", it) }
+            coverLocation?.let { extension.put("directoryCoverReference", it) }
             extension.put("directoryArtworkMetadataResolved", track.directoryArtworkMetadataResolved)
             item.put("extension", JSONObject().put("io.github.gretchycat.infiniselect", extension))
             items.put(item)
@@ -180,6 +189,18 @@ internal object AudioPlaylistJspf {
         com.infinifolder.mime.MimeRegistry.guess(name).takeIf {
             it.startsWith("audio/", true) || it.startsWith("image/", true) || it.startsWith("video/", true)
         } ?: "application/octet-stream"
+}
+
+/** Prefer InfiniSelect's stable source identity over its short-lived selection relay. */
+internal object AudioPlaylistLocations {
+    fun authoritative(uri: Uri?, reference: String?): String? =
+        reference?.takeUnless(::isTemporarySelectionRelay) ?: uri?.toString()
+
+    private fun isTemporarySelectionRelay(value: String): Boolean {
+        if (!value.startsWith("content://", ignoreCase = true)) return false
+        val authority = value.substringAfter("://").substringBefore('/').substringBefore('?').substringBefore('#')
+        return authority.endsWith(".selection", ignoreCase = true)
+    }
 }
 
 private fun JSONObject.putNullable(key: String, value: Any?): JSONObject {

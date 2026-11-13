@@ -3,10 +3,11 @@ package com.infinifolder.viewer
 import android.net.TestUri
 import com.infinifolder.audio.playlist.PlaylistParser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class AudioPlaylistJspfTest {
-    @Test fun exportedPlaylistRetainsStableReferencesBesideTemporaryContentLinks() {
+    @Test fun exportedPlaylistUsesAuthoritativeLocationsInsteadOfTemporaryRelayLinks() {
         val track = AudioTrack(
             uri = TestUri("content://infinifolder.selection/temporary-track"),
             title = "Track",
@@ -22,12 +23,23 @@ class AudioPlaylistJspfTest {
             .toString(Charsets.UTF_8)
         val restored = PlaylistParser.parse("references.jspf", saved).single()
 
-        assertEquals("content://infinifolder.selection/temporary-track", restored.pathOrUri)
+        assertEquals("content://com.infinifolder.documents/document/stable-track", restored.pathOrUri)
         assertEquals("content://com.infinifolder.documents/document/stable-track", restored.sourceReference)
         assertEquals("content://com.infinifolder.documents/document/stable-directory", restored.directoryUri)
         assertEquals("content://com.infinifolder.documents/document/stable-directory", restored.directoryReference)
-        assertEquals("content://infinifolder.selection/temporary-cover", restored.directoryCoverUri)
+        assertEquals("content://com.infinifolder.documents/document/stable-cover", restored.directoryCoverUri)
         assertEquals("content://com.infinifolder.documents/document/stable-cover", restored.directoryCoverReference)
+        assertFalse(saved.contains("infinifolder.selection"))
+    }
+
+    @Test fun staleRelayReferenceDoesNotReplaceAnAlreadyStableTrackUri() {
+        assertEquals(
+            "content://com.infinifolder.documents/document/stable-track",
+            AudioPlaylistLocations.authoritative(
+                TestUri("content://com.infinifolder.documents/document/stable-track"),
+                "content://infinifolder.selection/expired-track",
+            ),
+        )
     }
 
     @Test fun exportedPlaylistKeepsImageItemsAndDirectoryImageMarkers() {
