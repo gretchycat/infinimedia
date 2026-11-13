@@ -4,6 +4,7 @@
 local.properties
 .idea/
 *.iml
+/*.apk
 /libraries/
 
 __pycache__/
