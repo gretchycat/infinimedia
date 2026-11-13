@@ -4,7 +4,9 @@ import android.content.Intent
 import android.os.Bundle
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.widget.Toast
 import io.github.gretchycat.infiniselect.InfiniSelect
+import io.github.gretchycat.infiniselect.FileSelectionContract
 import io.github.gretchycat.infiniselect.SelectionItem
 import com.infinifolder.viewer.ViewerActivity
 
@@ -24,8 +26,22 @@ class InfiniMediaActivity : ViewerActivity() {
             source?.clipData?.let { clip -> for (index in 0 until clip.itemCount) clip.getItemAt(index).uri?.let(uris::add) }
             source?.getParcelableExtraCompat(Intent.EXTRA_STREAM)?.let(uris::add)
         }
+        val sourceReferences = source?.getStringArrayListExtra(FileSelectionContract.EXTRA_RESULT_AUTHORITATIVE_URIS)
+        val singleReference = source?.getStringExtra(FileSelectionContract.EXTRA_RESULT_AUTHORITATIVE_URI)
+            ?: source?.getStringArrayListExtra(FileSelectionContract.EXTRA_RESULT_SOURCE_REFERENCES)?.firstOrNull()
+        fun authoritativeReference(uri: Uri, index: Int): String? =
+            sourceReferences?.getOrNull(index)?.takeIf(String::isNotBlank)
+                ?: singleReference?.takeIf { uri == source?.data || uris.size == 1 }
+                ?: runCatching { InfiniSelect.authoritativeUri(this, uri.toString())?.toString() }.getOrNull()
+                ?: InfiniSelect.authoritativeCandidate(null, uri)?.toString()
+        fun mimeType(uri: Uri, index: Int): String =
+            source?.getStringArrayListExtra(FileSelectionContract.EXTRA_RESULT_MIMES)?.getOrNull(index)
+                ?.takeIf(String::isNotBlank)
+                ?: runCatching { contentResolver.getType(uri) }.getOrNull()
+                ?: "application/octet-stream"
         val playerIntent = if (uris.size > 1) {
             val items = uris.map { uri ->
+                val index = uris.indexOf(uri)
                 val queried = runCatching {
                     contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)
                         ?.use { cursor ->
@@ -37,10 +53,21 @@ class InfiniMediaActivity : ViewerActivity() {
                             }
                         } ?: (null to null)
                 }.getOrDefault(null to null)
-                SelectionItem(uri, queried.first ?: uri.lastPathSegment.orEmpty(),
-                    contentResolver.getType(uri) ?: "application/octet-stream", queried.second)
+                SelectionItem(
+                    uri = uri,
+                    name = source?.getStringArrayListExtra(FileSelectionContract.EXTRA_RESULT_NAMES)
+                        ?.getOrNull(index)?.takeIf(String::isNotBlank)
+                        ?: queried.first ?: uri.lastPathSegment.orEmpty(),
+                    mimeType = mimeType(uri, index),
+                    sizeBytes = queried.second,
+                    sourceReference = authoritativeReference(uri, index),
+                )
             }
-            val playlist = InfiniSelect.createJspfPlaylist(this, items, "Shared audio.jspf")
+            val playlist = runCatching { InfiniSelect.createJspfPlaylist(this, items, "Shared audio.jspf") }
+                .getOrElse { error ->
+                    Toast.makeText(this, "Could not prepare the selected media: ${error.message ?: "missing storage location"}", Toast.LENGTH_LONG).show()
+                    return
+                }
             Intent(this, com.infinifolder.viewer.AudioPlayerActivity::class.java).apply {
                 this.action = Intent.ACTION_VIEW
                 setDataAndType(playlist, "application/jspf+json")
@@ -53,11 +80,14 @@ class InfiniMediaActivity : ViewerActivity() {
             if (uri == null) Intent(this, com.infinifolder.viewer.AudioPlayerActivity::class.java)
                 .setAction(Intent.ACTION_MAIN)
             else Intent(this, com.infinifolder.viewer.AudioPlayerActivity::class.java).apply {
+                val authoritative = authoritativeReference(uri, 0)
+                val mime = source?.type?.takeIf(String::isNotBlank) ?: mimeType(uri, 0)
                 this.action = Intent.ACTION_VIEW
-                setDataAndType(uri, source?.type ?: contentResolver.getType(uri))
+                setDataAndType(uri, mime)
                 putExtra("displayName", source?.getStringExtra("displayName")
                     ?: source?.getStringExtra("extra_name") ?: displayName(uri))
-                putExtra("mimeType", source?.type ?: contentResolver.getType(uri))
+                putExtra("mimeType", mime)
+                authoritative?.let { putExtra(FileSelectionContract.EXTRA_RESULT_AUTHORITATIVE_URI, it) }
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
         }
@@ -67,10 +97,12 @@ class InfiniMediaActivity : ViewerActivity() {
         ) ?: 0)
         val only = uris.singleOrNull()
         if (only != null && com.infinifolder.viewer.MediaTypeDetector.detect(displayName(only),
-                source?.type ?: contentResolver.getType(only)) == com.infinifolder.viewer.MediaType.VIDEO) {
+                source?.type?.takeIf(String::isNotBlank) ?: mimeType(only, 0)) == com.infinifolder.viewer.MediaType.VIDEO) {
             playerIntent.setClass(this, com.infinifolder.viewer.VideoPlayerActivity::class.java)
         }
-        startActivity(playerIntent)
+        runCatching { startActivity(playerIntent) }.onFailure { error ->
+            Toast.makeText(this, "Could not open selected media: ${error.message ?: "player launch failed"}", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun displayName(uri: Uri): String = runCatching {
