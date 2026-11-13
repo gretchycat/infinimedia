@@ -140,6 +140,10 @@ internal object AudioPlaylistJspf {
             track.startByte.takeIf { it > 0L }?.let { extension.put("startByte", it) }
             track.lengthBytes.takeIf { it >= 0L }?.let { extension.put("lengthBytes", it) }
             track.decoderExtension?.takeIf(String::isNotBlank)?.let { extension.put("decoderExtension", it) }
+            track.directoryUri?.let { extension.put("directoryUri", it.toString()) }
+            track.directoryName?.takeIf(String::isNotBlank)?.let { extension.put("directoryName", it) }
+            track.directoryCoverUri?.let { extension.put("directoryCoverUri", it.toString()) }
+            extension.put("directoryArtworkMetadataResolved", track.directoryArtworkMetadataResolved)
             item.put("extension", JSONObject().put("io.github.gretchycat.infiniselect", extension))
             items.put(item)
         }
