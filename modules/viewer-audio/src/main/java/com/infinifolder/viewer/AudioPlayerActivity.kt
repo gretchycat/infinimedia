@@ -75,14 +75,16 @@ private data class PlaylistPreviewTag(val uri: String)
 
 private class AspectRatio16x9FrameLayout(context: Context) : FrameLayout(context) {
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val width = when (MeasureSpec.getMode(widthMeasureSpec)) {
+        var width = when (MeasureSpec.getMode(widthMeasureSpec)) {
             MeasureSpec.UNSPECIFIED -> resources.displayMetrics.widthPixels
             else -> MeasureSpec.getSize(widthMeasureSpec)
         }.coerceAtLeast(1)
-        val wantedHeight = (width * 9f / 16f).toInt().coerceAtLeast(1)
+        var height = (width * 9f / 16f).toInt().coerceAtLeast(1)
         val heightLimit = MeasureSpec.getSize(heightMeasureSpec)
-        val height = if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.AT_MOST && heightLimit > 0)
-            minOf(wantedHeight, heightLimit) else wantedHeight
+        if (MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.UNSPECIFIED && heightLimit > 0 && height > heightLimit) {
+            height = heightLimit
+            width = (height * 16f / 9f).toInt().coerceAtLeast(1)
+        }
         super.onMeasure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY))
         setMeasuredDimension(width, height)
@@ -128,6 +130,9 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private lateinit var audioManager: AudioManager
 
     private lateinit var rootLayout: LinearLayout
+    private var fullscreenVideoHost: FrameLayout? = null
+    private var preFullscreenVisibility: Map<View, Int> = emptyMap()
+    private var preFullscreenSystemUiVisibility: Int? = null
     private lateinit var topInsetArea: View
     private lateinit var topBar: LinearLayout
     private lateinit var headerText: TextView
@@ -391,6 +396,9 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (newConfig.orientation != android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+            exitLandscapeVideoFullscreen()
+        }
         configureSkinLayout()
         applyTheme(ThemeManager.getAudioPlayerTheme(this))
     }
@@ -969,6 +977,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private var touchDownTime = 0L
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (isLandscapeVideoFullscreen) return super.dispatchTouchEvent(ev)
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 touchDownX = ev.rawX
@@ -1003,6 +1012,62 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             }
         }
         return super.dispatchTouchEvent(ev)
+    }
+
+    private var isLandscapeVideoFullscreen = false
+
+    private fun toggleLandscapeVideoFullscreen() {
+        if (resources.configuration.orientation != android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
+            AudioPlayerService.currentService?.currentTrack?.mediaKind != PlaylistMediaKind.VIDEO ||
+            ThemeManager.getAudioPlayerTheme(this).id !in setOf(AppThemeId.WINAMP_CLASSIC, AppThemeId.CUSTOM_WSZ)) return
+        if (isLandscapeVideoFullscreen) exitLandscapeVideoFullscreen() else enterLandscapeVideoFullscreen()
+    }
+
+    private fun enterLandscapeVideoFullscreen() {
+        if (isLandscapeVideoFullscreen || !::artCard.isInitialized) return
+        isLandscapeVideoFullscreen = true
+        preFullscreenVisibility = (0 until rootLayout.childCount)
+            .map { rootLayout.getChildAt(it) }
+            .associateWith { it.visibility }
+        preFullscreenSystemUiVisibility = window.decorView.systemUiVisibility
+        preFullscreenVisibility.keys.forEach { it.visibility = View.GONE }
+        (artCard.parent as? android.view.ViewGroup)?.removeView(artCard)
+        val host = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            isClickable = true
+            setOnClickListener { toggleLandscapeVideoFullscreen() }
+        }
+        fullscreenVideoHost = host
+        host.addView(artCard, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+        rootLayout.addView(host, LinearLayout.LayoutParams(-1, 0, 1f))
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN)
+    }
+
+    private fun exitLandscapeVideoFullscreen() {
+        if (!isLandscapeVideoFullscreen) return
+        isLandscapeVideoFullscreen = false
+        fullscreenVideoHost?.let { host ->
+            (artCard.parent as? android.view.ViewGroup)?.removeView(artCard)
+            rootLayout.removeView(host)
+        }
+        fullscreenVideoHost = null
+        val theme = ThemeManager.getAudioPlayerTheme(this)
+        if (theme.id == AppThemeId.WINAMP_CLASSIC || theme.id == AppThemeId.CUSTOM_WSZ) {
+            attachArtCardToVisualWindow(true)
+        } else {
+            attachArtCardToVisualWindow(false)
+        }
+        preFullscreenVisibility.forEach { (view, visibility) -> view.visibility = visibility }
+        preFullscreenVisibility = emptyMap()
+        preFullscreenSystemUiVisibility?.let {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = it
+        }
+        preFullscreenSystemUiVisibility = null
     }
 
     private fun setupUI() {
@@ -1325,6 +1390,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 bottomMargin = dp(12)
             }
             clipToOutline = true
+            setOnClickListener { toggleLandscapeVideoFullscreen() }
         }
 
         ansiTerminalView = AnsiTerminalView(this) {
@@ -2000,8 +2066,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private fun configureSkinLayout() {
         if (!::detailsWindow.isInitialized) return
         val config = resources.configuration
-        val columns = audioPlayerColumnCount(config.smallestScreenWidthDp,
-            config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
+        val landscape = config.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val columns = audioPlayerColumnCount(config.smallestScreenWidthDp, landscape)
         (dockedMetaRow.parent as? android.view.ViewGroup)?.removeView(dockedMetaRow)
         (dockedToolScroll.parent as? android.view.ViewGroup)?.removeView(dockedToolScroll)
         skinContainer.removeAllViews()
@@ -2017,20 +2083,20 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         dockedTrackArtist.maxLines = if (columns > 1) 2 else 1
         if (columns > 1) {
             skinContainer.orientation = LinearLayout.HORIZONTAL
-            detailsContent.addView(dockedMetaRow)
-            detailsContent.addView(dockedToolScroll)
             skinLeftColumn.addView(winampMainWindowView, LinearLayout.LayoutParams(-1, -2))
-            skinLeftColumn.addView(detailsWindow, LinearLayout.LayoutParams(-1, 0, 1f))
-            skinContainer.addView(skinLeftColumn, LinearLayout.LayoutParams(0, -1, 1f))
-            if (columns == 3) {
+            if (landscape) {
+                skinLeftColumn.addView(dockedVisualWindow, LinearLayout.LayoutParams(-1, -2))
+                dockedCenterCol.addView(dockedMetaRow, 0)
+                dockedCenterCol.addView(dockedToolScroll, 1)
                 skinRightColumn.addView(dockedSubWindow, FrameLayout.LayoutParams(-1, -1))
-                skinSpareColumn.addView(dockedVisualWindow, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+                skinContainer.addView(skinLeftColumn, LinearLayout.LayoutParams(0, -1, 1f))
                 skinContainer.addView(skinRightColumn, LinearLayout.LayoutParams(0, -1, 1f))
-                skinContainer.addView(skinSpareColumn, LinearLayout.LayoutParams(0, -1, 1f))
             } else {
-                skinDockedStack.addView(dockedVisualWindow, LinearLayout.LayoutParams(-1, -2))
-                skinDockedStack.addView(dockedSubWindow, LinearLayout.LayoutParams(-1, 0, 1f))
-                skinRightColumn.addView(skinDockedStack, FrameLayout.LayoutParams(-1, -1))
+                detailsContent.addView(dockedMetaRow)
+                detailsContent.addView(dockedToolScroll)
+                skinLeftColumn.addView(detailsWindow, LinearLayout.LayoutParams(-1, 0, 1f))
+                skinContainer.addView(skinLeftColumn, LinearLayout.LayoutParams(0, -1, 1f))
+                skinRightColumn.addView(dockedSubWindow, FrameLayout.LayoutParams(-1, -1))
                 skinContainer.addView(skinRightColumn, LinearLayout.LayoutParams(0, -1, 1f))
             }
         } else {
@@ -2589,6 +2655,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             }
         }
         playback.view.visibility = View.GONE
+        playback.view.isClickable = true
+        playback.view.setOnClickListener { toggleLandscapeVideoFullscreen() }
         artCard.addView(playback.view, 1, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
         visualVideoPlayback = playback
         return playback
@@ -3903,6 +3971,9 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     override fun onTrackChanged(track: AudioTrack?, index: Int, total: Int) {
         runOnUiThread {
+            if (isLandscapeVideoFullscreen && track?.mediaKind != PlaylistMediaKind.VIDEO) {
+                exitLandscapeVideoFullscreen()
+            }
             selectedPlaylistIndex = index.takeIf { it in 0 until total } ?: -1
             updateTrackView(track)
             updateControlsAppearance()

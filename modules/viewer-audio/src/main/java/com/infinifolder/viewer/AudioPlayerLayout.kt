@@ -4,8 +4,8 @@ package com.infinifolder.viewer
 internal fun audioPlayerColumnCount(smallestWidthDp: Int, landscape: Boolean): Int {
     val tablet = smallestWidthDp >= 600
     return when {
-        tablet && landscape -> 3
-        tablet || landscape -> 2
+        landscape -> 2
+        tablet -> 2
         else -> 1
     }
 }
