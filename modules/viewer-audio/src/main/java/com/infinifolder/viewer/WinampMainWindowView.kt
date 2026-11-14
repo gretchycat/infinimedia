@@ -43,7 +43,7 @@ class WinampMainWindowView @JvmOverloads constructor(
         fun onToggleDockedSubwindow()
         fun onClose()
         fun onVisualizerRequested()
-        fun onDiagnosticsRequested()
+        fun onEqualizerRequested()
     }
 
     var callback: Callback? = null
@@ -228,7 +228,7 @@ class WinampMainWindowView @JvmOverloads constructor(
                 Control.SHUFFLE -> if (isShuffle) "Shuffle on" else "Shuffle off"
                 Control.REPEAT -> if (isRepeat) "Repeat on" else "Repeat off"
                 Control.SEEK -> "Seek"; Control.VOLUME -> "Volume"; Control.BALANCE -> "Balance"
-                Control.TIMER -> "Toggle remaining time"; Control.EQ_BTN -> "Audio diagnostics"
+                Control.TIMER -> "Toggle remaining time"; Control.EQ_BTN -> "Equalizer"
                 Control.PL_BTN -> "Toggle playlist"; Control.TITLE_CLOSE -> "Close player"
                 else -> "Control"
             }
@@ -934,7 +934,7 @@ class WinampMainWindowView @JvmOverloads constructor(
                 invalidate()
             }
             Control.VISUALIZER -> { visualizerMode = (visualizerMode + 1) % 3; callback?.onVisualizerRequested(); invalidate() }
-            Control.EQ_BTN -> callback?.onDiagnosticsRequested()
+            Control.EQ_BTN -> callback?.onEqualizerRequested()
             Control.PL_BTN, Control.TITLE_SHADE -> callback?.onToggleDockedSubwindow()
             Control.TITLE_CLOSE -> callback?.onClose()
             else -> {}

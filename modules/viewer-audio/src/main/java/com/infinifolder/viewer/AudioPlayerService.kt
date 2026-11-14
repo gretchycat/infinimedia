@@ -143,6 +143,7 @@ class AudioPlayerService : Service() {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
     }
     private var mediaPlayer: MediaPlayer? = null
+    private val equalizerController by lazy { AudioEqualizerController(applicationContext) }
     private var currentStream: java.io.FileInputStream? = null
     private var currentPcmSource: com.infinifolder.audio.AudioWaveSource? = null
     private data class PendingSeek(val playerId: Int, val targetMs: Int, val startedMs: Long)
@@ -250,6 +251,17 @@ class AudioPlayerService : Service() {
             runCatching { preparedNext?.player?.setVolume(left, right) }
         }
     }
+
+    internal fun equalizerSnapshot(): AudioEqualizerSnapshot? = equalizerController.snapshot()
+
+    internal fun setEqualizerEnabled(enabled: Boolean) = equalizerController.setEnabled(enabled)
+
+    internal fun setEqualizerBandLevel(index: Int, levelMillibels: Short) =
+        equalizerController.setBandLevel(index, levelMillibels)
+
+    internal fun useEqualizerPreset(index: Int): Boolean = equalizerController.usePreset(index)
+
+    internal fun resetEqualizer() = equalizerController.reset()
 
     private var progressThread: Thread? = null
     private var isProgressRunning = false
@@ -917,6 +929,7 @@ class AudioPlayerService : Service() {
         invalidateGapless()
         loadCounter.incrementAndGet()
         analysisSource = null
+        equalizerController.release()
         notifyAudioSession(0)
         if (com.infinifolder.audio.cast.CastManager.isCasting) com.infinifolder.audio.cast.CastManager.stopCasting()
         stopProgressReporting()
@@ -1152,6 +1165,7 @@ class AudioPlayerService : Service() {
         restorePositionMs = null
         persistPlaylistState(positionMs = resumePosition ?: 0)
         analysisSource = null
+        equalizerController.release()
         notifyAudioSession(0)
         if (track.mediaKind != PlaylistMediaKind.AUDIO && track.mediaKind != PlaylistMediaKind.ANSI) {
             stopProgressReporting()
@@ -1368,6 +1382,7 @@ class AudioPlayerService : Service() {
                 synchronized(playerLock) {
                     if (loadCounter.get() == thisLoadId) {
                         mediaPlayer = p
+                        equalizerController.attach(runCatching { p.audioSessionId }.getOrDefault(0))
                         analysisSource = AnalysisSource(analysisSourceCounter.incrementAndGet(), playbackFile.absolutePath, waveSource.borrowedResource())
                         currentPcmSource = waveSource
                         currentDecodedFile = playbackFile.takeIf { it != stagedFile }

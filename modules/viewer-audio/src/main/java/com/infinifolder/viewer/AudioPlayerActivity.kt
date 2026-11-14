@@ -37,6 +37,8 @@ import android.widget.ProgressBar
 import android.widget.PopupMenu
 import android.widget.ScrollView
 import android.widget.SeekBar
+import android.widget.Spinner
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import com.infinifolder.audio.cast.CastManager
@@ -1833,8 +1835,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             override fun onVisualizerRequested() {
                 updateVisualizerCapture(AudioPlayerService.currentService?.audioSessionId ?: 0, explicitRequest = true)
             }
-            override fun onDiagnosticsRequested() {
-                showDiagnosticsDialog()
+            override fun onEqualizerRequested() {
+                showEqualizerDialog()
             }
         }
     }
@@ -1964,6 +1966,15 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             setOnClickListener { showDiagnosticsDialog() }
         }
         toolRow.addView(dockedDiagnosticsBtn, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+            marginStart = dp(4)
+            marginEnd = dp(4)
+        })
+
+        val equalizerButton = Button(this).apply {
+            formatCompactButton(this, "🎚 Equalizer", textSizeSp = 11f, padH = 8, padV = 3)
+            setOnClickListener { showEqualizerDialog() }
+        }
+        toolRow.addView(equalizerButton, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
             marginStart = dp(4)
             marginEnd = dp(4)
         })
@@ -3660,6 +3671,115 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             .setMessage(message)
             .setPositiveButton("OK", null)
             .show()
+    }
+
+    private fun showEqualizerDialog() {
+        val service = AudioPlayerService.currentService
+        val initial = service?.equalizerSnapshot()
+        if (service == null || initial == null) {
+            val message = when {
+                CastManager.isCasting -> "The Android equalizer can only process playback on this phone. Casting sends audio to the receiver, so use the receiver's audio controls."
+                else -> "Start local audio playback to attach the device equalizer. Some Android devices do not provide an equalizer effect."
+            }
+            ThemeManager.createDialogBuilder(this)
+                .setTitle("Equalizer unavailable")
+                .setMessage(message)
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+        val enable = Switch(this).apply {
+            text = "Enable equalizer"
+            isChecked = initial.enabled
+        }
+        content.addView(enable, LinearLayout.LayoutParams(-1, -2))
+
+        val presetPicker = Spinner(this)
+        val presetLabels = listOf("Custom") + initial.presets
+        presetPicker.adapter = android.widget.ArrayAdapter(
+            this, android.R.layout.simple_spinner_dropdown_item, presetLabels)
+        val initialPreset = initial.presets.indexOfFirst { it.equals(initial.activePreset, ignoreCase = true) }
+        presetPicker.setSelection(if (initialPreset >= 0) initialPreset + 1 else 0)
+        content.addView(presetPicker, LinearLayout.LayoutParams(-1, -2))
+
+        content.addView(TextView(this).apply {
+            text = "Adjust each frequency band. Changes apply during playback and are saved for later tracks."
+            textSize = 12f
+            setPadding(0, dp(4), 0, dp(8))
+        }, LinearLayout.LayoutParams(-1, -2))
+        val bands = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val bandScroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(bands)
+        }
+        content.addView(bandScroll, LinearLayout.LayoutParams(-1, dp(300)))
+
+        fun frequencyLabel(hz: Int): String = when {
+            hz >= 1_000_000 -> String.format(Locale.US, "%.1f kHz", hz / 1_000_000f)
+            hz >= 1_000 -> String.format(Locale.US, "%.1f kHz", hz / 1_000f)
+            else -> "$hz Hz"
+        }
+
+        fun renderBands(snapshot: AudioEqualizerSnapshot) {
+            bands.removeAllViews()
+            snapshot.bands.forEachIndexed { index, band ->
+                val bandLabel = TextView(this).apply {
+                    text = "${frequencyLabel(band.centerFrequencyHz)}  ${band.levelMillibels / 100f} dB"
+                    textSize = 12f
+                }
+                bands.addView(bandLabel, LinearLayout.LayoutParams(-1, -2))
+                val seek = SeekBar(this).apply {
+                    max = (snapshot.maxLevelMillibels - snapshot.minLevelMillibels).toInt().coerceAtLeast(1)
+                    progress = (band.levelMillibels - snapshot.minLevelMillibels).toInt().coerceIn(0, max)
+                    setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                            val level = (snapshot.minLevelMillibels.toInt() + progress).toShort()
+                            bandLabel.text = "${frequencyLabel(band.centerFrequencyHz)}  ${level / 100f} dB"
+                            if (fromUser) {
+                                service.setEqualizerBandLevel(index, level)
+                                if (presetPicker.selectedItemPosition != 0) presetPicker.setSelection(0)
+                            }
+                        }
+                        override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+                        override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+                    })
+                }
+                bands.addView(seek, LinearLayout.LayoutParams(-1, -2).apply {
+                    bottomMargin = dp(6)
+                })
+            }
+        }
+        renderBands(initial)
+        enable.setOnCheckedChangeListener { _, checked -> service.setEqualizerEnabled(checked) }
+        presetPicker.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (position == 0 || !service.useEqualizerPreset(position - 1)) return
+                service.setEqualizerEnabled(true)
+                enable.isChecked = true
+                service.equalizerSnapshot()?.let(::renderBands)
+            }
+        }
+
+        val dialog = ThemeManager.createDialogBuilder(this)
+            .setTitle("Equalizer")
+            .setView(content)
+            .setNeutralButton("Flat", null)
+            .setPositiveButton("Close", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                service.resetEqualizer()
+                presetPicker.setSelection(0)
+                service.equalizerSnapshot()?.let(::renderBands)
+            }
+        }
+        dialog.show()
     }
 
     /** Emoji ignore text color, so active state is shown with an accent pill background + full opacity. */
