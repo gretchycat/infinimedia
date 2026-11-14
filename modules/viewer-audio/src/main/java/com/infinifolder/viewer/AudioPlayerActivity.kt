@@ -10,7 +10,10 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.TransitionDrawable
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
@@ -257,6 +260,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private val visualAnimationCache = ConcurrentHashMap<String, android.graphics.drawable.Drawable>()
     private val visualBitmapAnimationCache = ConcurrentHashMap<String, com.infinifolder.preview.BitmapAnimation>()
     private var visualImagePlayback: PlaylistImageAnimationPlayback? = null
+    private var isShowingAnsiOverlay = false
     private var isPlayerResumed = false
     private val visualizerBands = FloatArray(16)
     private var progressFramePosted = false
@@ -364,6 +368,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         if (visualVideoWasPlayingBeforePause) visualVideoPlayback?.pause()
         (albumArtView.drawable as? android.graphics.drawable.Animatable)?.stop()
         visualImagePlayback?.pause()
+        if (::ansiTerminalView.isInitialized) ansiTerminalView.setPlaying(false)
         AudioPlayerService.currentService?.prioritizeMetadataTracks(emptyList())
         stopProgressFrames()
         visualizerBridge?.detach()
@@ -1312,7 +1317,10 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             clipToOutline = true
         }
 
-        ansiTerminalView = AnsiTerminalView(this).apply {
+        ansiTerminalView = AnsiTerminalView(this) {
+            val service = AudioPlayerService.currentService ?: return@AnsiTerminalView
+            service.activeAnsiOverlay?.let(service::completeAnsiOverlay)
+        }.apply {
             visibility = View.GONE
             layoutParams = FrameLayout.LayoutParams(-1, -1)
         }
@@ -2456,15 +2464,12 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private fun loadPlaylistImage(track: AudioTrack, generation: Long) {
         val uri = track.uri
         albumArtView.visibility = View.VISIBLE
-        albumArtView.alpha = 0f
-        albumArtView.setImageDrawable(null)
         albumArtView.setBackgroundColor(Color.BLACK)
         loadingIndicator.visibility = View.VISIBLE
         val cached = visualImageCache.get(uri.toString())
         if (cached != null) {
             loadingIndicator.visibility = View.GONE
             setPlaylistImageDrawable(uri, cached)
-            albumArtView.animate().alpha(1f).setDuration(420L).start()
             startVisualImageAnimation(uri, cached)
             schedulePlaylistImageAdvance(generation)
             return
@@ -2477,12 +2482,9 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 loadingIndicator.visibility = View.GONE
                 if (bitmap != null) {
                     setPlaylistImageDrawable(uri, bitmap)
-                    albumArtView.alpha = 0f
-                    albumArtView.animate().alpha(1f).setDuration(420L).start()
                     startVisualImageAnimation(uri, bitmap)
                 } else {
-                    albumArtView.alpha = 1f
-                    albumArtView.setImageResource(android.R.drawable.ic_menu_report_image)
+                    showPlaylistImageDrawable(getDrawable(android.R.drawable.ic_menu_report_image))
                     visualPaneDetailsText.text = "Image could not be rendered"
                 }
                 schedulePlaylistImageAdvance(generation)
@@ -2498,11 +2500,54 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private fun setPlaylistImageDrawable(uri: Uri, bitmap: Bitmap) {
         (albumArtView.drawable as? android.graphics.drawable.Animatable)?.stop()
-        val animated = visualAnimationCache[uri.toString()]
-        if (animated != null) {
-            albumArtView.setImageDrawable(animated)
-            (animated as? android.graphics.drawable.Animatable)?.start()
-        } else albumArtView.setImageBitmap(bitmap)
+        val target = visualAnimationCache[uri.toString()] ?: BitmapDrawable(resources, bitmap)
+        showPlaylistImageDrawable(target)
+        (target as? android.graphics.drawable.Animatable)?.start()
+    }
+
+    private fun showPlaylistImageDrawable(target: Drawable?) {
+        if (target == null) return
+        if (ansiTerminalView.visibility == View.VISIBLE && !isShowingAnsiOverlay) {
+            crossfadeFromAnsiToAlbumArt(target)
+            return
+        }
+        val previous = albumArtView.drawable
+        albumArtView.animate().cancel()
+        val duration = PlaylistVisualTiming.IMAGE_CROSSFADE_DURATION_MS
+        if (previous != null && albumArtView.visibility == View.VISIBLE && albumArtView.alpha > 0f) {
+            val transition = TransitionDrawable(arrayOf(previous, target)).apply { isCrossFadeEnabled = true }
+            albumArtView.alpha = 1f
+            albumArtView.setImageDrawable(transition)
+            transition.startTransition(duration.toInt())
+            albumArtView.postDelayed({
+                if (albumArtView.drawable === transition) albumArtView.setImageDrawable(target)
+            }, duration)
+        } else {
+            albumArtView.alpha = 0f
+            albumArtView.setImageDrawable(target)
+            albumArtView.animate().alpha(1f).setDuration(duration).start()
+        }
+    }
+
+    private fun crossfadeFromAnsiToAlbumArt(drawable: Drawable?) {
+        if (drawable == null) return
+        val duration = PlaylistVisualTiming.IMAGE_CROSSFADE_DURATION_MS
+        albumArtView.animate().cancel()
+        albumArtView.setImageDrawable(drawable)
+        albumArtView.setBackgroundColor(Color.TRANSPARENT)
+        albumArtView.alpha = 0f
+        albumArtView.visibility = View.VISIBLE
+        ansiTerminalView.animate().cancel()
+        ansiTerminalView.alpha = 1f
+        ansiTerminalView.visibility = View.VISIBLE
+        albumArtView.animate().alpha(1f).setDuration(duration).start()
+        ansiTerminalView.animate().alpha(0f).setDuration(duration).withEndAction {
+            if (!isShowingAnsiOverlay) {
+                ansiTerminalView.visibility = View.GONE
+                ansiTerminalView.alpha = 1f
+                ansiTerminalView.setDocument(null)
+            }
+        }.start()
     }
 
     private fun startVisualImageAnimation(uri: Uri, bitmap: Bitmap) {
@@ -3202,7 +3247,13 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val track = service.currentTrack
         updateTrackView(track)
         val isPlaying = if (CastManager.isCasting) CastManager.isRemotePlaying else service.isPlaying
-        ansiTerminalView.setPlaying(track?.mediaKind == PlaylistMediaKind.ANSI && service.isPlaying)
+        val overlayingAudio = service.activeAnsiOverlay?.followingAudio?.let {
+            track?.mediaKind == PlaylistMediaKind.AUDIO &&
+                it.authoritativeUri == track.authoritativeUri && it.startByte == track.startByte &&
+                it.lengthBytes == track.lengthBytes
+        } == true
+        ansiTerminalView.setPlaying(overlayingAudio ||
+            (track?.mediaKind == PlaylistMediaKind.ANSI && service.isPlaying))
         updateProgressAnimation(isPlaying)
         updatePlayPauseButton(isPlaying)
         loadingIndicator.visibility = if (service.isLoading) View.VISIBLE else View.GONE
@@ -3307,6 +3358,14 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private fun updateTrackView(track: AudioTrack?) {
         if (track == null) return
+        val service = AudioPlayerService.currentService
+        val ansiOverlay = service?.activeAnsiOverlay?.takeIf {
+            track.mediaKind == PlaylistMediaKind.AUDIO &&
+                it.followingAudio.authoritativeUri == track.authoritativeUri &&
+                it.followingAudio.startByte == track.startByte &&
+                it.followingAudio.lengthBytes == track.lengthBytes
+        }
+        val wasShowingAnsi = ansiTerminalView.visibility == View.VISIBLE
         val visualKey = "${track.mediaKind}:${track.uri}"
         val changedVisual = visualKey != activeVisualTrackKey
         if (changedVisual) {
@@ -3335,11 +3394,12 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val generation = visualLoadGeneration.get()
         when (track.mediaKind) {
             PlaylistMediaKind.ANSI -> {
+                isShowingAnsiOverlay = false
                 albumArtView.visibility = View.GONE
                 ansiTerminalView.visibility = View.VISIBLE
+                ansiTerminalView.alpha = 1f
                 visualPaneMetadata.visibility = View.GONE
                 visualPaneVisualizerView.visibility = View.GONE
-                val service = AudioPlayerService.currentService
                 val presentation = service?.currentAnsiPresentation
                 ansiTerminalView.setDocument(presentation?.terminal)
                 ansiTerminalView.setPlaying(service?.isPlaying == true)
@@ -3351,9 +3411,15 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 }
             }
             PlaylistMediaKind.IMAGE -> {
-                ansiTerminalView.visibility = View.GONE
+                isShowingAnsiOverlay = false
+                ansiTerminalView.setPlaying(false)
+                if (!wasShowingAnsi) {
+                    ansiTerminalView.visibility = View.GONE
+                    ansiTerminalView.setDocument(null)
+                }
                 visualPaneMetadata.visibility = View.VISIBLE
                 albumArtView.visibility = View.VISIBLE
+                if (wasShowingAnsi) albumArtView.alpha = 0f
                 visualPaneDetailsText.text = metadataDetails.ifBlank {
                     "IMAGE  ${track.sourceMimeType ?: com.infinifolder.mime.MimeRegistry.guess(track.fileName)}"
                 }
@@ -3361,33 +3427,52 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 if (changedVisual) loadPlaylistImage(track, generation)
             }
             PlaylistMediaKind.VIDEO -> {
-                ansiTerminalView.visibility = View.GONE
+                isShowingAnsiOverlay = false
+                ansiTerminalView.setPlaying(false)
+                if (!wasShowingAnsi) {
+                    ansiTerminalView.visibility = View.GONE
+                    ansiTerminalView.setDocument(null)
+                }
                 visualPaneMetadata.visibility = View.VISIBLE
                 albumArtView.visibility = View.VISIBLE
+                if (wasShowingAnsi) albumArtView.alpha = 0f
                 visualPaneDetailsText.text = metadataDetails.ifBlank { "VIDEO" }
                 visualizerPaneVisualizerVisibility(false)
                 if (changedVisual) loadPlaylistVideo(track, generation)
             }
             PlaylistMediaKind.AUDIO -> {
-                ansiTerminalView.visibility = View.GONE
                 visualPaneMetadata.visibility = View.VISIBLE
-                albumArtView.visibility = View.VISIBLE
                 visualPaneDetailsText.text = metadataDetails
                 visualizerPaneVisualizerVisibility(true)
-                if (changedVisual || albumArtView.visibility != View.VISIBLE) {
+                if (ansiOverlay != null) {
+                    isShowingAnsiOverlay = true
+                    albumArtView.visibility = View.GONE
+                    ansiTerminalView.visibility = View.VISIBLE
+                    ansiTerminalView.alpha = 1f
+                    ansiTerminalView.setDocument(ansiOverlay.presentation.terminal)
+                    ansiTerminalView.setPlaybackPosition(ansiOverlay.elapsedMs())
+                    ansiTerminalView.setPlaying(ansiOverlay.elapsedMs() < ansiOverlay.durationMs)
+                    visualPaneDetailsText.text = "ANSI output · ${metadataDetails.ifBlank { track.title }}"
+                } else {
+                    isShowingAnsiOverlay = false
+                    ansiTerminalView.setPlaying(false)
+                    if (!wasShowingAnsi) {
+                        ansiTerminalView.visibility = View.GONE
+                        ansiTerminalView.setDocument(null)
+                    }
+                    albumArtView.visibility = View.VISIBLE
                     val audioArtwork = track.artwork ?: track.directoryArtwork
                         ?: if (!track.directoryName.isNullOrBlank()) directoryEntryBitmap(track, dp(256)) else null
-                    albumArtView.visibility = View.VISIBLE
-                    albumArtView.alpha = 1f
+                    val artDrawable = audioArtwork?.let { BitmapDrawable(resources, it) }
+                        ?: getDrawable(android.R.drawable.ic_media_play)
                     if (audioArtwork != null) {
-                        albumArtView.setImageBitmap(audioArtwork)
                         albumArtView.setBackgroundColor(Color.TRANSPARENT)
                     } else {
-                        albumArtView.setImageResource(android.R.drawable.ic_media_play)
                         albumArtView.setBackgroundColor(ThemeManager.getAudioPlayerTheme(this).alternateBackground)
                     }
-                } else if (track.artwork != null) {
-                    albumArtView.setImageBitmap(track.artwork)
+                    if (wasShowingAnsi) crossfadeFromAnsiToAlbumArt(artDrawable)
+                    else if (changedVisual || albumArtView.visibility != View.VISIBLE) showPlaylistImageDrawable(artDrawable)
+                    else if (track.artwork != null) showPlaylistImageDrawable(artDrawable)
                 }
             }
         }
@@ -3884,8 +3969,15 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     override fun onPlaybackStateChanged(isPlaying: Boolean, isLoading: Boolean) {
         runOnUiThread {
             val effectivePlaying = if (CastManager.isCasting) CastManager.isRemotePlaying else isPlaying || visualVideoPlaying
-            ansiTerminalView.setPlaying(isPlaying &&
-                AudioPlayerService.currentService?.currentTrack?.mediaKind == PlaylistMediaKind.ANSI)
+            val service = AudioPlayerService.currentService
+            val overlayingAudio = service?.activeAnsiOverlay?.followingAudio?.let {
+                service.currentTrack?.mediaKind == PlaylistMediaKind.AUDIO &&
+                    it.authoritativeUri == service.currentTrack?.authoritativeUri &&
+                    it.startByte == service.currentTrack?.startByte &&
+                    it.lengthBytes == service.currentTrack?.lengthBytes
+            } == true
+            ansiTerminalView.setPlaying(overlayingAudio ||
+                (isPlaying && service?.currentTrack?.mediaKind == PlaylistMediaKind.ANSI))
             updateProgressAnimation(effectivePlaying)
             if (effectivePlaying && !CastManager.isCasting) updateVisualizerCapture(AudioPlayerService.currentService?.audioSessionId ?: 0)
             updatePlayPauseButton(effectivePlaying)

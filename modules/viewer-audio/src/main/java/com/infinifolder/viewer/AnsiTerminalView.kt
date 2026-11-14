@@ -9,7 +9,10 @@ import android.view.View
 import io.github.gretchycat.infiniscribe.DosTextDocument
 
 /** Fixed 80-column CP437/Unicode terminal output for Infinimedia's visual-media pane. */
-internal class AnsiTerminalView(context: Context) : View(context) {
+internal class AnsiTerminalView(
+    context: Context,
+    private val onSequenceComplete: () -> Unit,
+) : View(context) {
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
         color = Color.WHITE
         typeface = loadTerminalTypeface(context)
@@ -21,11 +24,17 @@ internal class AnsiTerminalView(context: Context) : View(context) {
     private var startedAt = 0L
     private var playing = false
     private var lastCompletedCells = -1
+    private var completionReported = false
     private val frame = object : Runnable {
         override fun run() {
             if (!playing) return
             invalidate()
-            if (completedCells() < totalCells()) postDelayed(this, 16L)
+            if (completedCells() < totalCells()) {
+                postDelayed(this, 16L)
+            } else if (!completionReported) {
+                completionReported = true
+                onSequenceComplete()
+            }
         }
     }
 
@@ -42,6 +51,7 @@ internal class AnsiTerminalView(context: Context) : View(context) {
         elapsedBeforePause = 0L
         startedAt = 0L
         lastCompletedCells = -1
+        completionReported = false
         if (value == null) {
             rowStarts = IntArray(0)
             rowEnds = IntArray(0)
@@ -101,6 +111,7 @@ internal class AnsiTerminalView(context: Context) : View(context) {
         elapsedBeforePause = positionMs.coerceAtLeast(0L)
         startedAt = if (playing) android.os.SystemClock.elapsedRealtime() else 0L
         lastCompletedCells = -1
+        completionReported = false
         invalidate()
     }
 

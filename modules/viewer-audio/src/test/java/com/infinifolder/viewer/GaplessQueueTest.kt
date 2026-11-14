@@ -1,10 +1,23 @@
 package com.infinifolder.viewer
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GaplessQueueTest {
+    @Test fun silentAnsiCanLinkOnlyToTheFollowingAudioItem() {
+        assertTrue(canLinkNextAudio(PlaylistMediaKind.ANSI, PlaylistMediaKind.AUDIO,
+            RepeatMode.NONE, silentAnsiDisplayOverlay = true))
+        assertFalse(canLinkNextAudio(PlaylistMediaKind.ANSI, PlaylistMediaKind.AUDIO,
+            RepeatMode.NONE, silentAnsiDisplayOverlay = false))
+        assertFalse(canLinkNextAudio(PlaylistMediaKind.ANSI, PlaylistMediaKind.IMAGE,
+            RepeatMode.NONE, silentAnsiDisplayOverlay = true))
+        assertFalse(canLinkNextAudio(PlaylistMediaKind.ANSI, PlaylistMediaKind.AUDIO,
+            RepeatMode.ONE, silentAnsiDisplayOverlay = true))
+    }
+
     @Test fun advancesWithoutRepeatingAtTheEnd() {
         assertEquals(1, gaplessNextIndex(0, 3, RepeatMode.NONE))
         assertEquals(2, gaplessNextIndex(1, 3, RepeatMode.NONE))

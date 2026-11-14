@@ -70,6 +70,26 @@ class AnsiPlaybackSupportTest {
         }
     }
 
+    @Test fun silentAnsiCanHandOffWhileItsVisualSequenceContinues() {
+        val document = AnsiPlaybackSupport.parse("line\n".repeat(24).toByteArray(), "plain.ans")
+        AnsiPlaybackSupport.openPcm(document, overlapFollowingAudio = true).use { pcm ->
+            assertEquals(PlaylistVisualTiming.SILENT_ANSI_HANDOFF_MS, pcm.format.durationMs!!)
+            assertTrue(pcm.format.durationMs!! < document.displayDurationMs)
+        }
+    }
+
+    @Test fun ansiMusicStillPlaysToCompletionWhenNextAudioCanOverlap() {
+        val directory = System.getProperty("infini.audio.fixtures")
+            ?: error("Audio test fixture path was not configured")
+        val bytes = File(directory, "c_major_piano_ansi_music.ans").readBytes()
+        val document = AnsiPlaybackSupport.parse(bytes, "c_major_piano_ansi_music.ans")
+        assertTrue(document.terminal.music.isNotEmpty())
+        val originalFrames = AnsiPlaybackSupport.openPcm(document).use { it.format.totalFrames }
+        val overlappingFrames = AnsiPlaybackSupport.openPcm(document, overlapFollowingAudio = true)
+            .use { it.format.totalFrames }
+        assertEquals(originalFrames, overlappingFrames)
+    }
+
     @Test fun serialTimingAndOverflowScrollingUseEightyColumn9600BaudRules() {
         assertEquals(9_600, AnsiPlaybackSupport.BAUD_RATE)
         assertEquals(2_000L, AnsiPlaybackSupport.displayDurationMs(rows = 24))

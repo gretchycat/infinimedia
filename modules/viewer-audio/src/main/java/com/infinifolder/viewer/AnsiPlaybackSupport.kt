@@ -87,9 +87,11 @@ internal object AnsiPlaybackSupport {
     }
 
     /** A melody continues while the terminal is being typed; silence fills any remaining display time. */
-    fun openPcm(document: AnsiPlaybackDocument): PcmStream {
+    fun openPcm(document: AnsiPlaybackDocument, overlapFollowingAudio: Boolean = false): PcmStream {
         val melody = document.terminal.music.takeIf { it.isNotEmpty() }?.let(AnsiMusic::open)
-        return TimedPcmStream(melody, document.displayDurationMs)
+        val silentDuration = if (overlapFollowingAudio && melody == null)
+            PlaylistVisualTiming.SILENT_ANSI_HANDOFF_MS else document.displayDurationMs
+        return TimedPcmStream(melody, silentDuration)
     }
 
     private class TimedPcmStream(private val melody: PcmStream?, minimumDurationMs: Long) : PcmStream {

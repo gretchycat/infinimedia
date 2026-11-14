@@ -37,6 +37,18 @@ import java.util.concurrent.TimeUnit
 
 enum class RepeatMode { NONE, ALL, ONE }
 
+internal data class AnsiDisplayOverlay(
+    val presentation: AnsiPlaybackDocument,
+    val followingAudio: AudioTrack,
+    val startedAtElapsedRealtimeMs: Long = 0L,
+) {
+    fun elapsedMs(nowElapsedRealtimeMs: Long = android.os.SystemClock.elapsedRealtime()): Long =
+        if (startedAtElapsedRealtimeMs == 0L) 0L
+        else (nowElapsedRealtimeMs - startedAtElapsedRealtimeMs).coerceAtLeast(0L)
+
+    val durationMs: Long get() = presentation.displayDurationMs
+}
+
 /** Media kind is persisted with the URI so a mixed playlist survives process death. */
 enum class PlaylistMediaKind { AUDIO, ANSI, IMAGE, VIDEO }
 
@@ -208,6 +220,15 @@ class AudioPlayerService : Service() {
         private set
     @Volatile internal var currentAnsiPresentation: AnsiPlaybackDocument? = null
         private set
+    @Volatile internal var activeAnsiOverlay: AnsiDisplayOverlay? = null
+        private set
+
+    internal fun completeAnsiOverlay(expected: AnsiDisplayOverlay) {
+        if (activeAnsiOverlay !== expected) return
+        activeAnsiOverlay = null
+        currentAnsiPresentation = null
+        notifyTrackChanged(currentTrack)
+    }
 
     /** Use the active composite PCM Cast source for the same analysis pipeline as local playback. */
     internal fun setCastAnalysisSource(resource: io.github.gretchycat.infinistream.SourceResource?) {
@@ -414,7 +435,18 @@ class AudioPlayerService : Service() {
     private fun sameTrack(a: AudioTrack, b: AudioTrack): Boolean =
         a.authoritativeUri == b.authoritativeUri && a.startByte == b.startByte && a.lengthBytes == b.lengthBytes
 
+    private fun nextAudioAfterSilentAnsi(): AudioTrack? {
+        if (repeatMode == RepeatMode.ONE) return null
+        return synchronized(playlist) {
+            val nextIndex = nextReadableTrack(playlist, currentIndex, repeatMode == RepeatMode.ALL)
+                ?: return@synchronized null
+            playlist.getOrNull(nextIndex)?.takeIf { it.mediaKind == PlaylistMediaKind.AUDIO }
+        }
+    }
+
     fun setPlaylist(tracks: List<AudioTrack>, startIndex: Int = 0, preservePlaylistOrder: Boolean = false) {
+        activeAnsiOverlay = null
+        currentAnsiPresentation = null
         restorePositionTrack = null
         restorePositionMs = null
         restoredPlaylist = false
@@ -787,6 +819,8 @@ class AudioPlayerService : Service() {
     }
 
     fun stopPlayback() {
+        activeAnsiOverlay = null
+        currentAnsiPresentation = null
         persistPlaylistState(immediate = true)
         loadingThread?.interrupt()
         loadingThread = null
@@ -1021,6 +1055,9 @@ class AudioPlayerService : Service() {
                 if (sameTrack(originalPlaylist[index], track)) originalPlaylist[index] = track
             }
         }
+        if (activeAnsiOverlay?.followingAudio?.let { sameTrack(it, track) } != true) {
+            activeAnsiOverlay = null
+        }
         currentAnsiPresentation = null
         val resumePosition = restoredPositionFor(track)
         restorePositionTrack = null
@@ -1156,6 +1193,12 @@ class AudioPlayerService : Service() {
                     AnsiPlaybackSupport.read(source.resource, track.fileName).also { presentation ->
                         if (loadCounter.get() == thisLoadId) {
                             currentAnsiPresentation = presentation
+                            val followingAudio = if (presentation.terminal.music.isEmpty())
+                                nextAudioAfterSilentAnsi()
+                            else null
+                            if (followingAudio != null) {
+                                activeAnsiOverlay = AnsiDisplayOverlay(presentation, followingAudio)
+                            }
                             mainHandler.post {
                                 if (loadCounter.get() == thisLoadId) notifyTrackChanged(currentTrack)
                             }
@@ -1174,7 +1217,10 @@ class AudioPlayerService : Service() {
                 decodedOutput = output
                 val waveSource = if (ansiPresentation != null) {
                     com.infinifolder.audio.AudioProcessing.openWaveSource(
-                        AnsiPlaybackSupport.openPcm(ansiPresentation), output,
+                        AnsiPlaybackSupport.openPcm(
+                            ansiPresentation,
+                            overlapFollowingAudio = activeAnsiOverlay?.presentation === ansiPresentation,
+                        ), output,
                         com.infinifolder.audio.PcmOutputOptions(sampleRate = 8_000, channels = 1),
                         cancelled = { loadCounter.get() != thisLoadId }, metadata = source.metadata
                     )
@@ -1265,6 +1311,12 @@ class AudioPlayerService : Service() {
                     seekPosition?.let { mediaPlayer?.seekTo(it) }
                     if (castReturn?.second != false) {
                         started = runCatching { mediaPlayer?.start(); mediaPlayer?.isPlaying == true }.getOrDefault(false)
+                    }
+                }
+                if (started && ansiPresentation != null) {
+                    activeAnsiOverlay?.takeIf { it.presentation === ansiPresentation }?.let { overlay ->
+                        activeAnsiOverlay = overlay.copy(
+                            startedAtElapsedRealtimeMs = android.os.SystemClock.elapsedRealtime())
                     }
                 }
                 if (castReturn?.second == false) {
@@ -1409,12 +1461,16 @@ class AudioPlayerService : Service() {
     }
 
     private fun readableGaplessNextIndex(): Int? {
-        if (currentTrack?.mediaKind != PlaylistMediaKind.AUDIO) return null
+        val kind = currentTrack?.mediaKind
+        val silentAnsiHandoff = kind == PlaylistMediaKind.ANSI &&
+            activeAnsiOverlay?.presentation === currentAnsiPresentation
         if (repeatMode == RepeatMode.ONE) return null
         val next = nextReadableTrack(playlist, currentIndex, repeatMode == RepeatMode.ALL) ?: return null
-        // A visual item is a real queue stop. Do not let the linked MediaPlayer
-        // jump across it before the playlist listener can display it.
-        return next.takeIf { playlist.getOrNull(it)?.mediaKind == PlaylistMediaKind.AUDIO }
+        // Visual items stop audio gapless playback, except silent ANSI output
+        // whose terminal remains visible while this following audio begins.
+        return next.takeIf {
+            canLinkNextAudio(kind, playlist.getOrNull(it)?.mediaKind, repeatMode, silentAnsiHandoff)
+        }
     }
 
     /** Called by the visual pane when its image dwell or video playback ends. */

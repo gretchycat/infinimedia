@@ -35,6 +35,11 @@ The 0.1.1 Android build passed `./build.sh --console=plain` on Termux with all
 manifest reports version code 2. This does not establish device playback or
 successful access to a user's saved remote connection.
 
+Version 0.1.2 starts the next audio item over silent ANSI output while the
+terminal finishes scrolling, and crossfades visual image changes for one second.
+Its Android build passed with 95 unit tests; the APK reports version code 3.
+Device playback and visual transition behavior still need on-device acceptance.
+
 ## ANSI art and ANSI Music
 
 `.ans` and `.ansi` files can be queued alongside audio, images and video. InfiniMedia
@@ -42,9 +47,11 @@ detects UTF-8 versus CP437, interprets ANSI terminal control and color sequences
 an 80-column display, and draws the output in the visual-media pane. Long output
 scrolls at 9600 baud (8N1 timing). Embedded ANSI Music commands use libinfinisound's
 PC-speaker synthesizer and play through the end; the finished frame remains visible
-if the tune outlasts the text. The next playlist item starts as soon as the ANSI
-display and its audio finish. ANSI Music is played locally; disconnect Cast before
-starting an ANSI item.
+if the tune outlasts the text. If a silent ANSI item is followed by audio, that audio
+starts over the still-scrolling terminal; the ANSI sequence remains visible until
+complete. Other ANSI items advance when their display and any embedded audio finish.
+Visual image changes crossfade over one second. ANSI Music is played locally;
+disconnect Cast before starting an ANSI item.
 
 ## Build script
 

@@ -10,6 +10,12 @@ internal fun gaplessNextIndex(current: Int, count: Int, repeat: RepeatMode): Int
     }
 }
 
+internal fun canLinkNextAudio(current: PlaylistMediaKind?, next: PlaylistMediaKind?, repeat: RepeatMode,
+    silentAnsiDisplayOverlay: Boolean = false): Boolean = repeat != RepeatMode.ONE &&
+    next == PlaylistMediaKind.AUDIO &&
+    (current == PlaylistMediaKind.AUDIO ||
+        current == PlaylistMediaKind.ANSI && silentAnsiDisplayOverlay)
+
 /** The next automatic Cast item, skipping entries already known to be unreadable. */
 internal data class CastTrackKey(val uri: String, val start: Long, val length: Long)
 internal fun castTrackKey(track: AudioTrack) = CastTrackKey(track.uri.toString(), track.startByte, track.lengthBytes)
