@@ -65,6 +65,14 @@ public class ThemeRuntimeCheck {
     }
     static void rasterChecks() throws Exception {
         int[] before,after;
+        byte[] oraBytes=bytes("theme/main.ora");
+        BitmapFrame ora=decode(oraBytes,"main.ora");
+        check(ora.getAnimation()!=null && ora.getColorCycling()==null,"Extended ORA XML creates a Canvas animation");
+        before=pixels(ora.getBitmap());after=before.clone();
+        ora.getAnimation().render(120_000_000L,after,true);
+        check(!Arrays.equals(before,after),"Extended ORA palette ranges change pixels");
+        check(ora.getBitmap().getWidth()==1933 && ora.getBitmap().getHeight()==813,"Extended ORA canvas dimensions retained");
+        pass("extended-ora-palette-cycle-direct-decode");
         BitmapFrame base=decode(bytes("theme/main-base.png"),"main-base.png");
         BitmapFrame iff=decode(bytes("theme/main-cycle.iff"),"main-cycle.iff");
         check(base.getBitmap().getWidth()==275 && base.getBitmap().getHeight()==116,"Scaled ORA base canvas");
