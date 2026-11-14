@@ -1000,8 +1000,27 @@ class AudioPlayerService : Service() {
         currentTrackMetadataThread?.interrupt()
         currentTrackMetadataThread = null
         invalidateGapless()
-        var track = currentTrack ?: return
-        track = resolveTrackAccess(track)
+        val requested = currentTrack ?: return
+        val thisLoadId = loadCounter.incrementAndGet()
+        isLoading = true
+        stopProgressReporting()
+        notifyPlaybackState(isPlaying = false, isLoading = true)
+        loadingThread = Thread({
+            val track = try {
+                resolveTrackAccess(requested)
+            } catch (error: Exception) {
+                com.infinifolder.storage.DiagnosticLog.record("audio.source.resolve.failed",
+                    "file=${requested.fileName} sourceScheme=${requested.authoritativeUri.scheme}", error)
+                stopForSourceFailure(requested, thisLoadId, error)
+                return@Thread
+            }
+            mainHandler.post {
+                if (loadCounter.get() == thisLoadId) loadResolvedTrack(track, thisLoadId)
+            }
+        }, "AudioSourceResolver-$thisLoadId").apply { start() }
+    }
+
+    private fun loadResolvedTrack(track: AudioTrack, thisLoadId: Long) {
         synchronized(playlist) {
             if (currentIndex in playlist.indices && sameTrack(playlist[currentIndex], track)) {
                 playlist[currentIndex] = track
@@ -1011,7 +1030,6 @@ class AudioPlayerService : Service() {
             }
         }
         currentAnsiPresentation = null
-        val thisLoadId = loadCounter.incrementAndGet()
         val resumePosition = restoredPositionFor(track)
         restorePositionTrack = null
         restorePositionMs = null
@@ -1101,7 +1119,7 @@ class AudioPlayerService : Service() {
             if (source == null || (stagedFile != null && !stagedFile.exists())) {
                 isLoading = false
                 notifyPlaybackState(isPlaying = false, isLoading = false)
-                skipUnreadable(track, thisLoadId,
+                stopForSourceFailure(track, thisLoadId,
                     sourceOpenFailure ?: java.io.IOException("Unable to read audio source"))
                 return@Thread
             }
@@ -1310,7 +1328,17 @@ class AudioPlayerService : Service() {
         }.apply { name = "AudioTrackLoader-$thisLoadId"; start() }
     }
 
-    /** Keep failed entries visible, but never retry an unreadable queue in a loop. */
+    /** Failed storage access does not prove that any queued media file is invalid. */
+    private fun stopForSourceFailure(track: AudioTrack, loadId: Long, error: Exception) {
+        com.infinifolder.storage.DiagnosticLog.record("audio.source.access.failed", "file=${track.fileName}", error)
+        mainHandler.post {
+            if (loadCounter.get() != loadId) return@post
+            stopPlayback()
+            notifyError("Could not access ${track.fileName}: ${error.message ?: "storage unavailable"}")
+        }
+    }
+
+    /** Keep decoder failures visible, but never retry an unreadable queue in a loop. */
     private fun skipUnreadable(track: AudioTrack, loadId: Long, error: Exception) {
         com.infinifolder.storage.DiagnosticLog.record("audio.track.skipped", "file=${track.fileName} load=$loadId", error)
         mainHandler.post {
@@ -1326,6 +1354,7 @@ class AudioPlayerService : Service() {
                     stopPlayback()
                     notifyTrackChanged(currentTrack)
                     notifyProgress(0, 0)
+                    notifyError("Unable to play ${track.fileName}: ${error.message ?: "source read failed"}")
                 } else {
                     currentIndex = next
                     loadAndPlayCurrent()
@@ -1448,7 +1477,7 @@ class AudioPlayerService : Service() {
     }
 
     /** Prepare the next source without changing the current player or cache lease. */
-    private fun prepareGaplessTrack(track: AudioTrack, sessionId: Int): GaplessPrepared? {
+    private fun prepareGaplessTrack(requestedTrack: AudioTrack, sessionId: Int): GaplessPrepared? {
         var source: AudioPlaybackInput? = null
         var stagedFile: File? = null
         var decodedFile: File? = null
@@ -1456,6 +1485,7 @@ class AudioPlayerService : Service() {
         var player: MediaPlayer? = null
         var complete = false
         try {
+            val track = resolveTrackAccess(requestedTrack)
             val needsLocalRange = track.startByte > 0 || track.lengthBytes > 0 || track.decoderExtension != null
             source = AudioPlaybackInput.open(this, track.uri, track.fileName, needsLocalRange)
             if (Thread.currentThread().isInterrupted) return null
@@ -2256,23 +2286,10 @@ class AudioPlayerService : Service() {
 
     /** Resolve only when a track is about to play or be inspected by the metadata worker. */
     private fun resolveTrackAccess(track: AudioTrack): AudioTrack {
-        val canonical = io.github.gretchycat.infiniselect.InfiniSelect.authoritativeUri(
-            this, track.authoritativeUri.toString()) ?: track.authoritativeUri
-        var updated = if (canonical == track.authoritativeUri) track
-            else track.copy(sourceReference = canonical.toString())
-        if (updated.uri == canonical && updated.uri.scheme.equals("content", true)) return updated
-        if (updated.uri.scheme.equals("content", true) && hasReadableRelay(updated.uri)) return updated
-        val resolved = io.github.gretchycat.infiniselect.InfiniSelect.resolveSource(
-            this, canonical.toString(), updated.fileName, updated.sourceMimeType)
-            ?: return updated
-        updated = updated.copy(uri = resolved.contentUri, sourceReference = resolved.authoritativeUri.toString())
-        return updated
+        val resolved = io.github.gretchycat.infiniselect.InfiniSelect.requireSelectedSource(
+            this, track.uri, track.authoritativeUri.toString(), track.fileName, track.sourceMimeType)
+        return track.copy(uri = resolved.contentUri, sourceReference = resolved.authoritativeUri.toString())
     }
-
-    private fun hasReadableRelay(uri: Uri): Boolean = runCatching {
-        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
-            ?.use { it.moveToFirst() } == true
-    }.getOrDefault(false)
 
     /** Resolve sibling cover metadata and a small reusable image for every queued track. */
     private fun resolveDirectoryArtworkLight(track: AudioTrack): AudioTrack {

@@ -142,6 +142,25 @@ class PlaylistExpanderTest {
     }
 
     @Test
+    fun savedSftpPlaylistRetainsItsIdentityUntilPlaybackRequestsAccess() {
+        val source = "sftp://saved-connection-id/Music/Artist/Album Name/01 - Song.mp3"
+        val playlist = tempFolder.newFile("saved.jspf").apply { writeText("""
+            {"playlist":{"track":[{"location":"$source","title":"Song",
+              "extension":{"io.github.gretchycat.infiniselect":{
+                "sourceReference":"$source","mimeType":"audio/mpeg","mediaKind":"audio"}}}]}}
+        """.trimIndent()) }
+        val tracks = PlaylistExpander.expandPlaylist(dummyContext(), TestUri("file://${playlist.absolutePath}"))
+        assertEquals(1, tracks.size)
+        val track = tracks.single()
+        assertEquals("sftp", track.uri.scheme)
+        assertEquals(java.net.URI(source.replace(" ", "%20")),
+            java.net.URI(requireNotNull(track.sourceReference).replace(" ", "%20")))
+        assertEquals("01 - Song.mp3", track.fileName)
+        assertEquals("audio/mpeg", track.sourceMimeType)
+        assertFalse(track.isUnreadable)
+    }
+
+    @Test
     fun testNestedPlaylistRecursiveExpansionInOrder() {
         val nestedFile = File(playlistsDir, "nested_playlist.m3u")
         assertTrue("nested_playlist.m3u must exist", nestedFile.exists())

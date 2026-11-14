@@ -21,6 +21,20 @@ authoritative location. Remote, archive and filesystem-image URI syntax stays
 inside the storage libraries and InfiniFolder's IPC provider. Expiring Folder
 relay links are never written into playlists.
 
+Version 0.1.1 resolves queued identities with libinfiniselect on a worker before
+opening audio, images, video or a gapless preload. It keeps valid current grants
+and requests a fresh access link when needed, including canonical SAF locations
+which this application cannot read directly. A resolution failure stops with the
+provider's error and leaves the queue intact; it does not mark every track
+unreadable or attempt to open an SFTP address through Android's local adapter.
+Install the current InfiniFolder build alongside client updates when testing
+remote playlists; the optional storage provider runs in that application.
+
+The 0.1.1 Android build passed `./build.sh --console=plain` on Termux with all
+91 unit tests passing, including a saved-SFTP-playlist regression. The packaged
+manifest reports version code 2. This does not establish device playback or
+successful access to a user's saved remote connection.
+
 ## ANSI art and ANSI Music
 
 `.ans` and `.ansi` files can be queued alongside audio, images and video. InfiniMedia
