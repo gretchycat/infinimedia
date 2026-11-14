@@ -33,8 +33,7 @@ class VisualizerView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
-    private var colors: IntArray = intArrayOf(Color.WHITE)
-    private var peakColor: Int = Color.WHITE
+    private val peakColor: Int = Color.WHITE
 
     var isPlaying: Boolean = false
         set(value) {
@@ -53,17 +52,7 @@ class VisualizerView @JvmOverloads constructor(
         invalidate()
     }
 
-    fun setSpectrumColors(spectrumColors: IntArray) {
-        if (spectrumColors.isNotEmpty()) {
-            colors = spectrumColors
-            invalidate()
-        }
-    }
-
-    fun applyTheme(theme: ThemeColors) {
-        setSpectrumColors(theme.spectrumColors)
-        peakColor = theme.textHighlight
-    }
+    fun applyTheme(@Suppress("UNUSED_PARAMETER") theme: ThemeColors) = invalidate()
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -96,17 +85,14 @@ class VisualizerView @JvmOverloads constructor(
             val right = left + barWidth
             val barH = barHeights[i].coerceIn(0f, h)
 
-            // Segment color interpolation
-            val colorIndex = (i * colors.size) / barCount
-            val barColor = colors[colorIndex.coerceIn(0, colors.size - 1)]
-            barPaint.color = barColor
-
             // Draw segmented blocks (Winamp classic style)
             val segmentH = 4f
             val segmentGap = 2f
             var curY = h - 2f
             while (curY > h - barH && curY > 0) {
                 val blockTop = (curY - segmentH).coerceAtLeast(0f)
+                val levelHeight = ((h - (blockTop + curY) * 0.5f) / h).coerceIn(0f, 1f)
+                barPaint.color = visualizerColorForHeight(levelHeight)
                 canvas.drawRect(left, blockTop, right, curY, barPaint)
                 curY -= (segmentH + segmentGap)
             }
