@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
 """Package this checkout's custom theme without rendering or changing source artwork."""
 from pathlib import Path
-import argparse,json,zipfile
+import argparse,json,subprocess,tempfile,zipfile
 
 IMAGE_ROLES=set('main gen cbuttons titlebar posbar volume shufrep text numbers monoster playpaus pledit balance eqmain eq_ex nums_ex video genex albumlist amarok mikro mb'.split())
 METADATA={'theme.json','skininfo.xml','readme.txt','region.txt','pledit.txt','albumlist.txt','viscolor.txt','screenshot.png'}
 
 def package(source,output):
     manifest=json.loads((source/'theme.json').read_text())
+    generated={}
+    ora=source/'main.ora'
+    converter=source/'ora-to-skin.py'
+    if ora.is_file() and converter.is_file():
+        with tempfile.TemporaryDirectory(prefix='infinimedia-theme-') as temp:
+            temp=Path(temp)
+            base=temp/'main-base.png';cycle=temp/'main-cycle.iff'
+            subprocess.run(['python3',str(converter),str(ora),'--base-output',str(base),'--cycle-output',str(cycle)],check=True)
+            generated={'main-base.png':base.read_bytes(),'main-cycle.iff':cycle.read_bytes()}
     for value in manifest['images'].values():
         for name in ([value] if isinstance(value,str) else value):
             if Path(name).name != name or not (source/name).is_file():raise ValueError('Missing/local-only theme layer: '+name)
@@ -21,7 +30,7 @@ def package(source,output):
         for p in files:
             if p.stat().st_size>8*1024*1024:raise ValueError('Oversized theme entry: '+p.name)
             item=zipfile.ZipInfo(p.name,(1980,1,1,0,0,0));item.compress_type=zipfile.ZIP_DEFLATED;item.external_attr=0o100644<<16
-            archive.writestr(item,p.read_bytes())
+            archive.writestr(item,generated.get(p.name,p.read_bytes()))
     return len(files)
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--source',type=Path,default=Path(__file__).resolve().parents[1]/'theme');parser.add_argument('--output',type=Path,required=True);args=parser.parse_args()

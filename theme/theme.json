@@ -1,6 +1,6 @@
 {
   "name": "Infinimedia Default",
   "images": {
-    "main": "main.iff"
+    "main": ["main-base.png", "main-cycle.iff"]
   }
 }

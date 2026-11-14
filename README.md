@@ -125,13 +125,19 @@ resolve IFF, PNG, SVG and other supported decoders. `theme.json` can select an
 arbitrary filename or up to four same-size image layers. IFF palette cycling
 animates while the player is resumed and pauses with its lifecycle. SVG/SVGZ,
 including the preserved [`infini.svg`](infini.svg) source, render as still images;
-custom SVG color-cycling metadata is ignored. Use indexed IFF for cycling artwork.
+custom SVG color-cycling metadata is ignored. The default faceplate is authored
+in `theme/main.ora`; the build scales it and converts its palette-cycle ranges
+into an indexed IFF overlay.
 
 ```sh
 python3 scripts/test-package-default-theme.py
 # After ./build.sh, on a local Android 10+/Termux runtime:
 python3 scripts/verify-theme-runtime.py
 ```
+
+The build and theme tests require Python 3 and the pinned Pillow version in
+[`scripts/requirements-theme.txt`](scripts/requirements-theme.txt). Install it
+with `python3 -m pip install -r scripts/requirements-theme.txt` before building.
 
 The runtime probe checks real SVG/IFF pixels, cache play/pause/clear, format
 signature detection, and frame resizing. It exports full-frame PNG previews to

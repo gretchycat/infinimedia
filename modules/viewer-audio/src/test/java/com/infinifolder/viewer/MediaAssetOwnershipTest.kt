@@ -24,15 +24,19 @@ class MediaAssetOwnershipTest {
         }
     }
 
-    @Test fun defaultThemeUsesTheCorrectedCyclingFaceplate() {
+    @Test fun defaultThemeUsesScaledBaseAndOraDefinedCyclingOverlay() {
         val file = File(requireNotNull(System.getProperty("infini.media.defaultSkin")))
         assertTrue(file.isFile)
         val parsed = file.inputStream().use { WinampSkinParser.parseSkinFromStream(it, "Infini") }!!
-        assertEquals(listOf("main.iff"), com.infinifolder.theme.SkinArtwork(parsed.artwork).filenames("main"))
+        assertEquals(listOf("main-base.png", "main-cycle.iff"), com.infinifolder.theme.SkinArtwork(parsed.artwork).filenames("main"))
         assertEquals("Infinimedia Default", parsed.name)
-        val image = parsed.artwork.getValue("main.iff")
-        assertEquals("FORM", String(image, 0, 4, Charsets.US_ASCII))
-        assertTrue(String(image, Charsets.ISO_8859_1).contains("CRNG"))
+        val base = parsed.artwork.getValue("main-base.png")
+        assertEquals("PNG", String(base, 1, 3, Charsets.US_ASCII))
+        assertEquals(275, java.nio.ByteBuffer.wrap(base, 16, 4).int)
+        assertEquals(116, java.nio.ByteBuffer.wrap(base, 20, 4).int)
+        val cycle = parsed.artwork.getValue("main-cycle.iff")
+        assertEquals("FORM", String(cycle, 0, 4, Charsets.US_ASCII))
+        assertEquals(7, Regex("CRNG").findAll(String(cycle, Charsets.ISO_8859_1)).count())
         java.util.zip.ZipFile(file).use { archive ->
             val metadata = archive.getInputStream(archive.getEntry("skininfo.xml")).use { it.readBytes().toString(Charsets.UTF_8) }
             assertTrue(metadata.contains("<name>Infinimedia Default</name>"))

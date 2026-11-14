@@ -53,7 +53,7 @@ public class ThemeRuntimeCheck {
         check(supplied.getAnimation()==null && supplied.getColorCycling()==null,"User SVG remains a still image");
         check(supplied.getBitmap().getWidth()==1800 && supplied.getBitmap().getHeight()==900,"User SVG canvas dimensions retained");
         png(supplied.getBitmap(),"infini-svg-static.png");pass("supplied-svg-static-render");
-        for(String name:new String[]{"theme/main.iff","theme/video.bmp"}) {
+        for(String name:new String[]{"theme/main-cycle.iff","theme/video.bmp"}) {
             byte[] encoded=bytes(name);
             BitmapFrame animated=CanvasStreams.decodeBytes(encoded,name,256,true);
             BitmapFrame preview=CanvasStreams.decodeBytes(encoded,name,256,false);
@@ -65,14 +65,17 @@ public class ThemeRuntimeCheck {
     }
     static void rasterChecks() throws Exception {
         int[] before,after;
-        BitmapFrame iff=decode(bytes("theme/main.iff"),"main.iff");
-        check(iff.getBitmap().getWidth()==275 && iff.getBitmap().getHeight()==116,"Corrected IFF canvas");
-        before=pixels(iff.getBitmap());for(int p:before)check(Color.alpha(p)==255,"Corrected full faceplate is opaque");
-        check(iff.getColorCycling()!=null,"IFF cycling available");after=before.clone();
+        BitmapFrame base=decode(bytes("theme/main-base.png"),"main-base.png");
+        BitmapFrame iff=decode(bytes("theme/main-cycle.iff"),"main-cycle.iff");
+        check(base.getBitmap().getWidth()==275 && base.getBitmap().getHeight()==116,"Scaled ORA base canvas");
+        check(iff.getBitmap().getWidth()==275 && iff.getBitmap().getHeight()==116,"Scaled ORA cycle canvas");
+        before=pixels(iff.getBitmap());
+        check(iff.getColorCycling()!=null,"ORA XML converted to IFF cycling");after=before.clone();
         iff.getColorCycling().render(200_000_000L,after,true);
-        check(!Arrays.equals(before,after),"IFF pixels cycle");
-        check(before[0]==after[0] && before[274]==after[274],"Faceplate background stays fixed");
-        pass("corrected-iff-cycling-and-opaque-background");
+        check(!Arrays.equals(before,after),"Converted ORA palette ranges cycle");
+        int[] basePixels=pixels(base.getBitmap());
+        for(int p:basePixels)check(Color.alpha(p)==255,"Scaled static ORA base is opaque");
+        pass("ora-base-scaling-and-xml-palette-cycling");
         Bitmap input=Bitmap.createBitmap(4,3,Bitmap.Config.ARGB_8888);input.eraseColor(Color.MAGENTA);
         ByteArrayOutputStream stream=new ByteArrayOutputStream();input.compress(Bitmap.CompressFormat.PNG,100,stream);
         BitmapFrame png=decode(stream.toByteArray(),"not-a-bitmap.iff");
@@ -128,10 +131,10 @@ public class ThemeRuntimeCheck {
         });
     }
     static void lifecycleChecks() throws Exception {
-        final byte[] iff=bytes("theme/main.iff");final int[] changed={0};
-        SkinImageCache cache=new SkinImageCache(name->Collections.singletonList(new Pair<>("main.iff",iff)),()->{changed[0]++;return Unit.INSTANCE;});
+        final byte[] base=bytes("theme/main-base.png"),iff=bytes("theme/main-cycle.iff");final int[] changed={0};
+        SkinImageCache cache=new SkinImageCache(name->Arrays.asList(new Pair<>("main-base.png",base),new Pair<>("main-cycle.iff",iff)),()->{changed[0]++;return Unit.INSTANCE;});
         Bitmap image=cache.bitmap("main.bmp");check(image!=null,"Cache image decoded");
-        check(image==cache.bitmap("main.iff"),"Logical role shares cache");
+        check(image==cache.bitmap("main-cycle.iff"),"Logical role shares cache");
         cache.setPlaying(true);Handler main=new Handler(Looper.getMainLooper());
         later(main,450,()->{
             check(changed[0]>1,"Visible cache animates");cache.setPlaying(false);final int paused=changed[0];final int[] frozen=pixels(image);
