@@ -83,10 +83,13 @@ class CastMediaServer(private val context: Context) {
         val ip = localAddress() ?: return null
         val token = UUID.randomUUID().toString()
         val port = socket?.localPort?.takeIf { running.get() } ?: return null
-        synchronized(trackLock) {
+        val retired = synchronized(trackLock) {
             if (!running.get()) return null
             tracks[token] = track
+            sources[token] = TrackSource(context, track) { !running.get() }
+            if (sources.size > 4) sources.remove(sources.keys.first()) else null
         }
+        retired?.retire()
         return "http://${ip.hostAddress}:$port/$token"
     }
 
@@ -134,7 +137,7 @@ class CastMediaServer(private val context: Context) {
     fun analysisResource(url: String?): SourceResource? {
         if (url.isNullOrBlank()) return null
         val token = url.substringAfterLast('/')
-        val owner = synchronized(trackLock) { sources[token] as? ContinuousSourceOwner } ?: return null
+        val owner = synchronized(trackLock) { sources[token] } ?: return null
         return owner.analysisResource()
     }
 
@@ -308,6 +311,7 @@ private class SourceLease(val resource: SourceResource, private val release: () 
 
 private interface SourceOwner {
     fun reserve(): () -> SourceLease
+    fun analysisResource(): SourceResource? = null
     fun retire()
 }
 
@@ -334,6 +338,51 @@ private class TrackSource(context: Context, track: AudioTrack, private val serve
             active++
         }
         return ::acquireReserved
+    }
+
+    /** Analyzer and receiver share the same prepared source, avoiding a second full decode. */
+    override fun analysisResource(): SourceResource = object : SourceResource {
+        override val metadata get() = preparedSource().metadata
+
+        override fun open(): ByteSource {
+            val lease = reserve().invoke()
+            var source: ByteSource? = null
+            try {
+                val opened = lease.resource.open()
+                source = opened
+                val positional = opened as? PositionalReadable
+                    ?: throw IOException("Cast analysis source is not positional")
+                val closeOnce = AtomicBoolean(false)
+                return object : ByteSource, PositionalReadable {
+                    override val metadata = opened.metadata
+                    override fun read(buffer: ByteArray, offset: Int, length: Int) =
+                        opened.read(buffer, offset, length)
+                    override fun readAt(position: Long, buffer: ByteArray, offset: Int, length: Int) =
+                        positional.readAt(position, buffer, offset, length)
+                    override fun close() {
+                        if (closeOnce.compareAndSet(false, true)) {
+                            try { opened.close() } finally { lease.close() }
+                        }
+                    }
+                }
+            } catch (error: Throwable) {
+                runCatching { source?.close() }
+                lease.close()
+                throw error
+            }
+        }
+    }
+
+    private fun preparedSource(): SourceResource {
+        work.run()
+        return try {
+            work.get().resource
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw InterruptedIOException("Cast analysis preparation interrupted").also { it.initCause(error) }
+        } catch (error: ExecutionException) {
+            throw IOException("Cannot prepare Cast analysis source", error.cause)
+        }
     }
 
     private fun acquireReserved(): SourceLease {
@@ -374,7 +423,7 @@ private class ContinuousSourceOwner(private val prepared: AudioTranscoder.Prepar
     private var active = 0
     private var closed = false
 
-    fun analysisResource(): SourceResource = object : SourceResource {
+    override fun analysisResource(): SourceResource = object : SourceResource {
         override val metadata get() = prepared.resource.metadata
 
         override fun open(): ByteSource {

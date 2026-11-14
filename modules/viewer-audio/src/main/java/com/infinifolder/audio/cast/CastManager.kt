@@ -509,7 +509,7 @@ object CastManager {
                     "file=${track.fileName} status=${result.status.statusCode} message=${result.status.statusMessage} autoplay=$autoplay"
                 )
                 val oldUrl = activeUrl
-                player.setCastAnalysisSource(null)
+                player.setCastAnalysisSource(mediaServer.analysisResource(url))
                 lastLoadedKey = requestedKey; completedKey = null
                 activeUrl = url; failedUrl = null
                 mediaServer.retire(oldUrl)
