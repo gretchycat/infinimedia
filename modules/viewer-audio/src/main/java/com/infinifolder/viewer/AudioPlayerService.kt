@@ -543,16 +543,25 @@ class AudioPlayerService : Service() {
         } else enqueueAll(listOf(track))
     }
 
-    fun enqueueAll(tracks: List<AudioTrack>) {
+    fun enqueueAll(tracks: List<AudioTrack>) = enqueueAll(tracks, PlaylistInsertion.END)
+
+    internal fun enqueueAll(tracks: List<AudioTrack>, insertion: PlaylistInsertion) {
         if (tracks.isEmpty()) return
         invalidateGapless()
         val wasEmpty = synchronized(playlist) {
             val empty = playlist.isEmpty()
-            playlist.addAll(tracks)
-            originalPlaylist.addAll(tracks)
-            // Enqueue is an append operation: preserve the active queue's order and
-            // place the submitted batch after its current end. Initial playlist loads
-            // still apply sorting/shuffle policy in setPlaylist().
+            val playlistIndex = playlistInsertionIndex(playlist.size, currentIndex, insertion)
+            playlist.addAll(playlistIndex, tracks)
+            val originalCurrentIndex = if (insertion == PlaylistInsertion.AFTER_CURRENT && !empty) {
+                val active = playlist.getOrNull(currentIndex)
+                // playlistIndex points after the active item; use the pre-insertion active
+                // item reference to preserve the user's chosen position in original order.
+                active?.let { track -> originalPlaylist.indexOfFirst { sameTrack(it, track) } } ?: -1
+            } else -1
+            val originalIndex = if (originalCurrentIndex >= 0) originalCurrentIndex + 1 else originalPlaylist.size
+            originalPlaylist.addAll(originalIndex, tracks)
+            if (insertion == PlaylistInsertion.AFTER_CURRENT && !empty) hasManualPlaylistOrder = true
+            // Initial playlist loads still apply sorting/shuffle policy in setPlaylist().
             if (empty) currentIndex = 0
             empty
         }

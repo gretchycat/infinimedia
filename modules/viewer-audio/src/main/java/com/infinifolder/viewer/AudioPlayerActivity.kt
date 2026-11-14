@@ -206,12 +206,9 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private lateinit var dockedTrackTitle: TextView
     private lateinit var dockedTrackArtist: TextView
     private lateinit var dockedTrackDetails: TextView
-    private lateinit var dockedSpeedBtn: Button
     private lateinit var dockedDiagnosticsBtn: Button
     private var dockedCastBtn: Button? = null
-    private var dockedAddToPlaylistBtn: Button? = null
-    private var dockedRemoveFromPlaylistBtn: Button? = null
-    private var dockedSavePlaylistBtn: Button? = null
+    private var pendingPlaylistInsertion = PlaylistInsertion.END
     private var selectedPlaylistIndex = -1
     private var playlistSelectionPending = false
     private val iconThemeManager by lazy { com.infinifolder.theme.IconThemeManager(applicationContext) }
@@ -792,8 +789,21 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             .show()
     }
 
+    private fun showAddTracksDialog() {
+        ThemeManager.createDialogBuilder(this)
+            .setTitle("Add tracks")
+            .setItems(arrayOf("After the current song", "At the end of the playlist")) { _, which ->
+                pendingPlaylistInsertion = if (which == 0) PlaylistInsertion.AFTER_CURRENT else PlaylistInsertion.END
+                showMediaCategoryDialog()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     /** Add the chooser result to the existing queue; it never replaces the active playlist. */
     private fun enqueueSelection(data: Intent, loadId: Long) {
+        val insertion = pendingPlaylistInsertion
+        pendingPlaylistInsertion = PlaylistInsertion.END
         setPlaylistUiLoadStage(loadId, "Reading selected media…", "phase=read-selection")
         val selectionStartedAt = android.os.SystemClock.elapsedRealtime()
         val selectionResult = runCatching { InfiniSelect.readResult(this, data) }
@@ -928,7 +938,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                                 return
                             }
                             setPlaylistUiLoadStage(loadId, "Adding ${tracks.size} tracks to the playlist…", "phase=enqueue")
-                            service.enqueueAll(tracks)
+                            service.enqueueAll(tracks, insertion)
                             if (selectedPlaylistIndex !in service.playlist.indices) selectedPlaylistIndex = service.currentIndex
                             val queued = synchronized(service.playlist) { ArrayList(service.playlist) }
                             playlistUiExpectedTracks = queued.size
@@ -1100,7 +1110,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             isFocusable = true
             contentDescription = "Add to playlist"
             if (selectableRes != 0) setBackgroundResource(selectableRes)
-            setOnClickListener { showMediaCategoryDialog() }
+            setOnClickListener { showAddTracksDialog() }
         }
         topBar.addView(addToPlaylistBtn, LinearLayout.LayoutParams(dp(38), dp(38)))
 
@@ -1817,10 +1827,10 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         dockedMetaRow.addView(metaCol, LinearLayout.LayoutParams(0, -2, 1f))
         dockedCenterCol.addView(dockedMetaRow)
 
-        // Static Secondary Controls Bar in a HorizontalScrollView so buttons never squish or clip
+        // Secondary controls share the available row width and can grow as actions are added.
         dockedToolScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
-            isFillViewport = false
+            isFillViewport = true
             clipToPadding = false
             setPadding(dp(6), 0, dp(6), dp(4))
         }
@@ -1828,63 +1838,26 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val toolRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), 0, dp(4), 0)
         }
-        dockedToolScroll.addView(toolRow, FrameLayout.LayoutParams(-2, -2))
-
-        dockedSpeedBtn = Button(this).apply {
-            formatCompactButton(this, "1.0x", textSizeSp = 11f, padH = 8, padV = 3)
-            setOnClickListener { showSpeedPicker() }
-        }
-        toolRow.addView(dockedSpeedBtn, LinearLayout.LayoutParams(-2, dp(32)).apply {
-            marginEnd = dp(6)
-        })
+        dockedToolScroll.addView(toolRow, FrameLayout.LayoutParams(-1, -2))
 
         dockedDiagnosticsBtn = Button(this).apply {
             formatCompactButton(this, "🔍 Technical", textSizeSp = 11f, padH = 8, padV = 3)
             setOnClickListener { showDiagnosticsDialog() }
         }
-        toolRow.addView(dockedDiagnosticsBtn, LinearLayout.LayoutParams(-2, dp(32)).apply {
-            marginEnd = dp(6)
+        toolRow.addView(dockedDiagnosticsBtn, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+            marginStart = dp(4)
+            marginEnd = dp(4)
         })
 
         dockedCastBtn = Button(this).apply {
             formatCompactButton(this, "📡 Cast", textSizeSp = 11f, padH = 8, padV = 3)
             setOnClickListener { showCastDialog() }
         }
-        toolRow.addView(dockedCastBtn, LinearLayout.LayoutParams(-2, dp(32)))
-
-        dockedAddToPlaylistBtn = Button(this).apply {
-            formatCompactButton(this, "+ Add", textSizeSp = 11f, padH = 8, padV = 3)
-            contentDescription = "Add to playlist"
-            setOnClickListener { showMediaCategoryDialog() }
-        }
-        toolRow.addView(dockedAddToPlaylistBtn, LinearLayout.LayoutParams(-2, dp(32)).apply {
-            marginStart = dp(6)
-        })
-
-        dockedRemoveFromPlaylistBtn = Button(this).apply {
-            formatCompactButton(this, "− Remove", textSizeSp = 11f, padH = 8, padV = 3)
-            contentDescription = "Remove selected track from playlist"
-            isEnabled = false
-            setOnClickListener {
-                val service = AudioPlayerService.currentService ?: return@setOnClickListener
-                if (service.removePlaylistItem(selectedPlaylistIndex)) {
-                    selectedPlaylistIndex = service.currentIndex
-                    updateDockedPlaylist()
-                }
-            }
-        }
-        toolRow.addView(dockedRemoveFromPlaylistBtn, LinearLayout.LayoutParams(-2, dp(32)).apply {
-            marginStart = dp(6)
-        })
-
-        dockedSavePlaylistBtn = Button(this).apply {
-            formatCompactButton(this, "💾 Save", textSizeSp = 11f, padH = 8, padV = 3)
-            contentDescription = "Save playlist as JSPF"
-            setOnClickListener { savePlaylistExternally() }
-        }
-        toolRow.addView(dockedSavePlaylistBtn, LinearLayout.LayoutParams(-2, dp(32)).apply {
-            marginStart = dp(6)
+        toolRow.addView(dockedCastBtn, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+            marginStart = dp(4)
+            marginEnd = dp(4)
         })
         dockedCenterCol.addView(dockedToolScroll)
 
@@ -1955,7 +1928,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         // 4. Authentic Playlist Window Bottom Bar (275x38 scaled to full width)
         dockedBottomBarView = WinampPlaylistBottomView(this).apply {
             layoutParams = LinearLayout.LayoutParams(-1, -2)
-            onAddToPlaylist = { showMediaCategoryDialog() }
+            onAddToPlaylist = { showAddTracksDialog() }
             onRemoveFromPlaylist = { removeSelectedPlaylistItem() }
             onSelectPlaylistItem = { selectCurrentlyPlayingPlaylistItem() }
             onMorePlaylistActions = { showPlaylistActionsDialog() }
@@ -2016,7 +1989,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         detailsBody.addView(WinampPlaylistBorderView(this, isLeft = false), LinearLayout.LayoutParams(-2, -1))
         detailsWindow.addView(detailsBody, LinearLayout.LayoutParams(-1, 0, 1f))
         detailsBottom = WinampPlaylistBottomView(this).apply {
-            onAddToPlaylist = { showMediaCategoryDialog() }
+            onAddToPlaylist = { showAddTracksDialog() }
             onRemoveFromPlaylist = { removeSelectedPlaylistItem() }
             onSelectPlaylistItem = { selectCurrentlyPlayingPlaylistItem() }
             onMorePlaylistActions = { showPlaylistActionsDialog() }
@@ -2083,8 +2056,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         }
         val curIdx = service.currentIndex
         if (selectedPlaylistIndex !in list.indices) selectedPlaylistIndex = curIdx.takeIf { it in list.indices } ?: -1
-        dockedRemoveFromPlaylistBtn?.isEnabled = selectedPlaylistIndex in list.indices
-        dockedSavePlaylistBtn?.isEnabled = list.isNotEmpty()
         val currentTrack = list.getOrNull(curIdx)
         val currentTrackKey = currentTrack?.let {
             "$curIdx:${it.uri}:${it.startByte}:${it.lengthBytes}"
@@ -2774,8 +2745,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             dockedPlaylistFooter.setBackgroundColor(theme.cardBackground)
             dockedPlaylistFooter.setTextColor(theme.textSecondary)
 
-            dockedSpeedBtn.background = ThemeManager.createButtonDrawable(theme, density)
-            dockedSpeedBtn.setTextColor(theme.buttonText)
             dockedDiagnosticsBtn.background = ThemeManager.createButtonDrawable(theme, density)
             dockedDiagnosticsBtn.setTextColor(theme.buttonText)
             dockedCastBtn?.background = ThemeManager.createButtonDrawable(theme, density)
@@ -3581,7 +3550,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val s = AudioPlayerService.currentService ?: return
         val speedStr = String.format(Locale.US, "%.2fx", s.playbackSpeed)
         speedBtn.text = speedStr
-        if (::dockedSpeedBtn.isInitialized) dockedSpeedBtn.text = speedStr
         if (ThemeManager.getAudioPlayerTheme(this).id == AppThemeId.WMP_GLASS) {
             refreshWmpControls()
             return
@@ -3682,7 +3650,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 service.jumpTo(which)
                 updateDockedPlaylist()
             }
-            .setPositiveButton("Add to playlist") { _, _ -> showMediaCategoryDialog() }
+            .setPositiveButton("Add to playlist") { _, _ -> showAddTracksDialog() }
             .setNeutralButton("Remove selected") { _, _ ->
                 if (service.removePlaylistItem(selectedPlaylistIndex)) {
                     selectedPlaylistIndex = service.currentIndex

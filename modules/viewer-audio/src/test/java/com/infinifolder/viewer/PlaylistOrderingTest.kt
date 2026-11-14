@@ -39,4 +39,11 @@ class PlaylistOrderingTest {
         assertEquals(listOf("a.mp3", "B.mp3"), tracks.map { it.filename })
         assertEquals(-1, sort(mutableListOf(), -1))
     }
+
+    @Test fun insertionChoicePlacesTracksAfterCurrentOrAtQueueEnd() {
+        assertEquals(3, playlistInsertionIndex(5, 2, PlaylistInsertion.AFTER_CURRENT))
+        assertEquals(5, playlistInsertionIndex(5, 2, PlaylistInsertion.END))
+        assertEquals(0, playlistInsertionIndex(0, -1, PlaylistInsertion.AFTER_CURRENT))
+        assertEquals(5, playlistInsertionIndex(5, -1, PlaylistInsertion.AFTER_CURRENT))
+    }
 }

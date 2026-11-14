@@ -1,5 +1,18 @@
 package com.infinifolder.viewer
 
+internal enum class PlaylistInsertion { AFTER_CURRENT, END }
+
+/** Return the insertion point for a batch of newly selected tracks. */
+internal fun playlistInsertionIndex(
+    trackCount: Int,
+    currentIndex: Int,
+    insertion: PlaylistInsertion,
+): Int = if (insertion == PlaylistInsertion.AFTER_CURRENT && currentIndex in 0 until trackCount) {
+    currentIndex + 1
+} else {
+    trackCount
+}
+
 /** Sort by source filename, keeping the selected occurrence and ordering slices of one file. */
 internal fun <T> sortPlaylistByFileName(
     items: MutableList<T>, currentIndex: Int, fileName: (T) -> String, offset: (T) -> Long = { 0L }
