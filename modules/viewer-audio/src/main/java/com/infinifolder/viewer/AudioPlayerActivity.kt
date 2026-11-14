@@ -454,7 +454,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             ?: requestedUri.toString()
         val requestedName = intent?.getStringExtra("displayName") ?: requestedUri.lastPathSegment ?: "Audio Track"
         val requestedMime = intent?.getStringExtra("mimeType") ?: intent?.type
-        val resolvedTarget = InfiniSelect.resolveSource(this, requestedReference, requestedName, requestedMime)
+        val resolvedTarget = InfiniSelect.resolveSelectedSource(this, requestedUri, requestedReference,
+            requestedName, requestedMime)
         val authoritativeTarget = resolvedTarget?.authoritativeUri
             ?: InfiniSelect.authoritativeUri(this, requestedReference)
             ?: InfiniSelect.authoritativeCandidate(null, requestedUri)
