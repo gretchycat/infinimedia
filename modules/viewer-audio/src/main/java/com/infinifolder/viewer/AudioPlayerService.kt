@@ -1076,11 +1076,15 @@ class AudioPlayerService : Service() {
             val loadStarted = android.os.SystemClock.elapsedRealtime()
             cacheFailure = null
             val needsLocalRange = track.startByte > 0 || track.lengthBytes > 0 || track.decoderExtension != null
+            var sourceOpenFailure: Exception? = null
             val source = try {
                 AudioPlaybackInput.open(this, track.uri, track.fileName, needsLocalRange,
                     metadataOnly = track.mediaKind == PlaylistMediaKind.ANSI)
             } catch (e: Exception) {
+                sourceOpenFailure = e
                 if (com.infinifolder.storage.DiskCache.capacityError(e) != null) cacheFailure = e to track.uri
+                com.infinifolder.storage.DiagnosticLog.record(
+                    "audio.source.open.failed", "file=${track.fileName} scheme=${track.uri.scheme}", e)
                 null
             }
             if (loadCounter.get() != thisLoadId) { runCatching { source?.close() }; return@Thread }
@@ -1097,7 +1101,8 @@ class AudioPlayerService : Service() {
             if (source == null || (stagedFile != null && !stagedFile.exists())) {
                 isLoading = false
                 notifyPlaybackState(isPlaying = false, isLoading = false)
-                skipUnreadable(track, thisLoadId, java.io.IOException("Unable to read audio source"))
+                skipUnreadable(track, thisLoadId,
+                    sourceOpenFailure ?: java.io.IOException("Unable to read audio source"))
                 return@Thread
             }
             val trackMime = try { contentResolver.getType(track.uri) } catch (_: Throwable) { null }

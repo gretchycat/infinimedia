@@ -472,6 +472,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             action = AudioPlayerService.ACTION_LOAD
             data = targetUri
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            clipData = android.content.ClipData.newRawUri(displayName, targetUri)
             putExtra("uri", targetUri.toString())
             putExtra("name", displayName)
             putExtra("mimeType", intent?.getStringExtra("mimeType") ?: intent?.type)
