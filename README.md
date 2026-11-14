@@ -126,8 +126,9 @@ arbitrary filename or up to four same-size image layers. IFF palette cycling
 animates while the player is resumed and pauses with its lifecycle. SVG/SVGZ,
 including the preserved [`infini.svg`](infini.svg) source, render as still images;
 custom SVG color-cycling metadata is ignored. The default faceplate is authored
-in `theme/main.ora`; the build scales it and converts its palette-cycle ranges
-into an indexed IFF overlay.
+in `theme/main.ora`; the skin packages the ORA unchanged and Canvas renders its
+palette-cycle extension directly. The complete decoded canvas is scaled to fit
+the Winamp faceplate.
 
 ```sh
 python3 scripts/test-package-default-theme.py
@@ -135,11 +136,10 @@ python3 scripts/test-package-default-theme.py
 python3 scripts/verify-theme-runtime.py
 ```
 
-The build and theme tests require Python 3 and the pinned Pillow version in
-[`scripts/requirements-theme.txt`](scripts/requirements-theme.txt). Install it
-with `python3 -m pip install -r scripts/requirements-theme.txt` before building.
+The build and theme tests require Python 3. No image conversion package is
+needed to build the default skin.
 
-The runtime probe checks real SVG/IFF pixels, cache play/pause/clear, format
+The runtime probe checks real SVG/IFF/ORA pixels, cache play/pause/clear, format
 signature detection, and frame resizing. It exports full-frame PNG previews to
 `build/theme-runtime/`. It does not exercise Activity layout, touch input, video
 surfaces, Android permissions or visible on-device playback.

@@ -349,7 +349,9 @@ class WinampMainWindowView @JvmOverloads constructor(
     private fun drawFaceplate(canvas: Canvas) {
         val mainBmp = ThemeManager.skinBitmap("main.bmp")
         if (mainBmp != null) {
-            srcRect.set(0, 0, min(275, mainBmp.width), min(116, mainBmp.height))
+            // Authoring formats such as extended ORA can provide the complete faceplate
+            // at a larger canvas size. Fit that whole image into the native Winamp frame.
+            srcRect.set(0, 0, mainBmp.width, mainBmp.height)
             dstRect.set(0, 0, 275, 116)
             canvas.drawBitmap(mainBmp, srcRect, dstRect, bitmapPaint)
         } else {

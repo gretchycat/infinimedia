@@ -1,6 +1,6 @@
 {
   "name": "Infinimedia Default",
   "images": {
-    "main": ["main-base.png", "main-cycle.iff"]
+    "main": "main.ora"
   }
 }

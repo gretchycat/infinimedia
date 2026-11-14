@@ -11,7 +11,10 @@ class PackagingTest(unittest.TestCase):
             with zipfile.ZipFile(a) as archive:
                 self.assertIn('theme.json',archive.namelist())
                 self.assertIn('screenshot.png',archive.namelist())
-                for name in archive.namelist():self.assertEqual((source/name).read_bytes(),archive.read(name))
+                for name in archive.namelist():
+                    self.assertEqual((source/name).read_bytes(),archive.read(name))
+                self.assertFalse((source/'main-base.png').exists())
+                self.assertFalse((source/'main-cycle.iff').exists())
                 self.assertNotIn('README.md',archive.namelist())
     def test_missing_layer_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -23,4 +26,14 @@ class PackagingTest(unittest.TestCase):
             for name in ('main.iff','main.bmp','main.bmp.backup','svg-to-iff.py','glyph-check.png','eqmain_iso.bmp'):(root/name).write_bytes(b'fixture')
             m.package(root,root/'output.wsz')
             with zipfile.ZipFile(root/'output.wsz') as archive:self.assertEqual(['main.iff','theme.json'],archive.namelist())
+    def test_ora_is_packaged_without_rewriting_or_expansion(self):
+        source=Path(__file__).resolve().parents[1]/'theme'
+        with tempfile.TemporaryDirectory() as tmp:
+            output=Path(tmp)/'default.wsz'
+            m.package(source,output)
+            with zipfile.ZipFile(output) as archive:
+                self.assertIn('main.ora',archive.namelist())
+                self.assertEqual((source/'main.ora').read_bytes(),archive.read('main.ora'))
+                self.assertNotIn('main-base.png',archive.namelist())
+                self.assertNotIn('main-cycle.iff',archive.namelist())
 if __name__=='__main__':unittest.main()

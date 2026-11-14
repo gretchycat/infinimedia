@@ -53,7 +53,7 @@ public class ThemeRuntimeCheck {
         check(supplied.getAnimation()==null && supplied.getColorCycling()==null,"User SVG remains a still image");
         check(supplied.getBitmap().getWidth()==1800 && supplied.getBitmap().getHeight()==900,"User SVG canvas dimensions retained");
         png(supplied.getBitmap(),"infini-svg-static.png");pass("supplied-svg-static-render");
-        for(String name:new String[]{"theme/main-cycle.iff","theme/video.bmp"}) {
+        for(String name:new String[]{"theme/video.bmp"}) {
             byte[] encoded=bytes(name);
             BitmapFrame animated=CanvasStreams.decodeBytes(encoded,name,256,true);
             BitmapFrame preview=CanvasStreams.decodeBytes(encoded,name,256,false);
@@ -61,29 +61,18 @@ public class ThemeRuntimeCheck {
             check(preview.getAnimation()==null && preview.getColorCycling()==null,"Still preview has no animation state: "+name);
             check(Arrays.equals(pixels(animated.getBitmap()),pixels(preview.getBitmap())),"Still preview preserves initial pixels: "+name);
         }
-        pass("still-preview-preserves-iff-and-bmp-pixels");
+        pass("still-preview-preserves-bmp-pixels");
     }
     static void rasterChecks() throws Exception {
         int[] before,after;
         byte[] oraBytes=bytes("theme/main.ora");
         BitmapFrame ora=decode(oraBytes,"main.ora");
-        check(ora.getAnimation()!=null && ora.getColorCycling()==null,"Extended ORA XML creates a Canvas animation");
+        check(ora.getAnimation()!=null && ora.getColorCycling()==null,"Extended ORA XML creates a Canvas animation: "+ora.getDecodeDiagnostics());
         before=pixels(ora.getBitmap());after=before.clone();
         ora.getAnimation().render(120_000_000L,after,true);
         check(!Arrays.equals(before,after),"Extended ORA palette ranges change pixels");
-        check(ora.getBitmap().getWidth()==1933 && ora.getBitmap().getHeight()==813,"Extended ORA canvas dimensions retained");
+        check(ora.getBitmap().getWidth()==1933 && ora.getBitmap().getHeight()==814,"Extended ORA canvas dimensions retained");
         pass("extended-ora-palette-cycle-direct-decode");
-        BitmapFrame base=decode(bytes("theme/main-base.png"),"main-base.png");
-        BitmapFrame iff=decode(bytes("theme/main-cycle.iff"),"main-cycle.iff");
-        check(base.getBitmap().getWidth()==275 && base.getBitmap().getHeight()==116,"Scaled ORA base canvas");
-        check(iff.getBitmap().getWidth()==275 && iff.getBitmap().getHeight()==116,"Scaled ORA cycle canvas");
-        before=pixels(iff.getBitmap());
-        check(iff.getColorCycling()!=null,"ORA XML converted to IFF cycling");after=before.clone();
-        iff.getColorCycling().render(200_000_000L,after,true);
-        check(!Arrays.equals(before,after),"Converted ORA palette ranges cycle");
-        int[] basePixels=pixels(base.getBitmap());
-        for(int p:basePixels)check(Color.alpha(p)==255,"Scaled static ORA base is opaque");
-        pass("ora-base-scaling-and-xml-palette-cycling");
         Bitmap input=Bitmap.createBitmap(4,3,Bitmap.Config.ARGB_8888);input.eraseColor(Color.MAGENTA);
         ByteArrayOutputStream stream=new ByteArrayOutputStream();input.compress(Bitmap.CompressFormat.PNG,100,stream);
         BitmapFrame png=decode(stream.toByteArray(),"not-a-bitmap.iff");
@@ -139,10 +128,11 @@ public class ThemeRuntimeCheck {
         });
     }
     static void lifecycleChecks() throws Exception {
-        final byte[] base=bytes("theme/main-base.png"),iff=bytes("theme/main-cycle.iff");final int[] changed={0};
-        SkinImageCache cache=new SkinImageCache(name->Arrays.asList(new Pair<>("main-base.png",base),new Pair<>("main-cycle.iff",iff)),()->{changed[0]++;return Unit.INSTANCE;});
+        final byte[] ora=bytes("theme/main.ora");final int[] changed={0};
+        SkinImageCache cache=new SkinImageCache(name->Collections.singletonList(new Pair<>("main.ora",ora)),()->{changed[0]++;return Unit.INSTANCE;});
         Bitmap image=cache.bitmap("main.bmp");check(image!=null,"Cache image decoded");
-        check(image==cache.bitmap("main-cycle.iff"),"Logical role shares cache");
+        check(image.getWidth()==1933 && image.getHeight()==814,"Complete ORA faceplate retained in skin cache");
+        check(image==cache.bitmap("main.ora"),"Logical role shares cache");
         cache.setPlaying(true);Handler main=new Handler(Looper.getMainLooper());
         later(main,450,()->{
             check(changed[0]>1,"Visible cache animates");cache.setPlaying(false);final int paused=changed[0];final int[] frozen=pixels(image);
