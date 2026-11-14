@@ -21,7 +21,6 @@ internal data class AnsiPlaybackDocument(
 /** Bridges the shared DOS terminal parser and ANSI Music synthesizer for Infinimedia. */
 internal object AnsiPlaybackSupport {
     const val BAUD_RATE = 9_600
-    const val NEXT_ITEM_PAUSE_MS = 2_000L
     const val COLUMNS = 80
     const val MAX_FILE_BYTES = 4 * 1024 * 1024
     private const val SERIAL_BITS_PER_CHARACTER = 10 // start bit + 8 data bits + stop bit

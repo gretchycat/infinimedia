@@ -77,7 +77,6 @@ class AnsiPlaybackSupportTest {
         assertEquals(0, AnsiPlaybackSupport.firstVisibleRow(1_920, rows = 25, columns = 80, visibleRows = 24))
         assertEquals(1, AnsiPlaybackSupport.firstVisibleRow(1_921, rows = 25, columns = 80, visibleRows = 24))
         assertEquals(2, AnsiPlaybackSupport.firstVisibleRow(2_001, rows = 30, columns = 80, visibleRows = 24))
-        assertEquals(2_000L, AnsiPlaybackSupport.NEXT_ITEM_PAUSE_MS)
     }
 
     @Test fun ansiExtensionsAndMimeTypesAreAdmittedAsVisualAudioItems() {

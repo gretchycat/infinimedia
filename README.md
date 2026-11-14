@@ -42,9 +42,9 @@ detects UTF-8 versus CP437, interprets ANSI terminal control and color sequences
 an 80-column display, and draws the output in the visual-media pane. Long output
 scrolls at 9600 baud (8N1 timing). Embedded ANSI Music commands use libinfinisound's
 PC-speaker synthesizer and play through the end; the finished frame remains visible
-if the tune outlasts the text. The playlist waits two seconds after an ANSI item
-finishes before starting the next item. ANSI Music is played locally; disconnect
-Cast before starting an ANSI item.
+if the tune outlasts the text. The next playlist item starts as soon as the ANSI
+display and its audio finish. ANSI Music is played locally; disconnect Cast before
+starting an ANSI item.
 
 ## Build script
 

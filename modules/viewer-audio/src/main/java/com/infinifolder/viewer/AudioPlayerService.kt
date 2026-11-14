@@ -237,7 +237,6 @@ class AudioPlayerService : Service() {
     private val loadCounter = AtomicLong(0L)
     private val analysisSourceCounter = AtomicLong(0L)
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var ansiAdvanceRunnable: Runnable? = null
     private val playlistStore by lazy { AudioPlaylistStore(applicationContext) }
     private val playlistPersistenceLock = Any()
     private val playlistPersistenceExecutor = ScheduledThreadPoolExecutor(1) { runnable ->
@@ -717,11 +716,6 @@ class AudioPlayerService : Service() {
 
     fun play() {
         if (currentTrack?.mediaKind !in setOf(PlaylistMediaKind.AUDIO, PlaylistMediaKind.ANSI)) return
-        if (currentTrack?.mediaKind == PlaylistMediaKind.ANSI && ansiAdvanceRunnable != null) {
-            cancelAnsiAdvance()
-            synchronized(playlist) { if (currentIndex in playlist.indices) loadAndPlayCurrent() }
-            return
-        }
         if (com.infinifolder.audio.cast.CastManager.isCasting) { com.infinifolder.audio.cast.CastManager.play(); return }
         if (mediaPlayer == null) {
             synchronized(playlist) { if (currentIndex in playlist.indices) loadAndPlayCurrent() }
@@ -793,7 +787,6 @@ class AudioPlayerService : Service() {
     }
 
     fun stopPlayback() {
-        cancelAnsiAdvance()
         persistPlaylistState(immediate = true)
         loadingThread?.interrupt()
         loadingThread = null
@@ -995,7 +988,6 @@ class AudioPlayerService : Service() {
     @Volatile private var currentTrackMetadataThread: Thread? = null
 
     private fun loadAndPlayCurrent() {
-        cancelAnsiAdvance()
         loadingThread?.interrupt()
         currentTrackMetadataThread?.interrupt()
         currentTrackMetadataThread = null
@@ -1597,25 +1589,9 @@ class AudioPlayerService : Service() {
     /** Called when the current track finishes naturally. */
     private fun onTrackCompleted() {
         if (currentTrack?.mediaKind == PlaylistMediaKind.ANSI) {
-            if (ansiAdvanceRunnable != null) return
-            val completedLoad = loadCounter.get()
-            val completedTrack = currentTrack
             val duration = currentDuration.coerceAtLeast(0)
             stopProgressReporting()
             notifyProgress(duration, duration)
-            notifyPlaybackState(isPlaying = false, isLoading = false)
-            val advance = object : Runnable {
-                override fun run() {
-                    if (ansiAdvanceRunnable !== this) return
-                    ansiAdvanceRunnable = null
-                    if (loadCounter.get() != completedLoad ||
-                        (completedTrack != null && currentTrack?.let { sameTrack(it, completedTrack) } != true)) return
-                    advanceCompletedTrack()
-                }
-            }
-            ansiAdvanceRunnable = advance
-            mainHandler.postDelayed(advance, AnsiPlaybackSupport.NEXT_ITEM_PAUSE_MS)
-            return
         }
         advanceCompletedTrack()
     }
@@ -1638,11 +1614,6 @@ class AudioPlayerService : Service() {
                 }
             }
         }
-    }
-
-    private fun cancelAnsiAdvance() {
-        ansiAdvanceRunnable?.let(mainHandler::removeCallbacks)
-        ansiAdvanceRunnable = null
     }
 
     private fun decodeSampledBitmap(data: ByteArray, reqWidth: Int, reqHeight: Int): Bitmap? {
