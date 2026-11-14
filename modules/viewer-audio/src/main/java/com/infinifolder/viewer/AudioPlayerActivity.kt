@@ -4109,6 +4109,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             updateProgressAnimation(isPlaying)
             AudioPlayerService.currentService?.let(::updateDisplayedProgress)
             if (CastManager.isCasting) {
+                updateVisualizerCapture(AudioPlayerService.currentService?.audioSessionId ?: 0)
                 updatePlayPauseButton(isPlaying)
                 if (::winampMainWindowView.isInitialized) {
                     winampMainWindowView.isPlaying = isPlaying

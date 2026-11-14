@@ -122,6 +122,7 @@ object CastManager {
                     failedUrl = null
                     lastLoadedKey = key(queued.track)
                     completedKey = null
+                    service?.setCastAnalysisSource(server?.analysisResource(queued.url))
                     com.infinifolder.storage.DiagnosticLog.record("cast.queue.advanced", "file=${queued.track.fileName}")
                     removePlayedQueueItems(client)
                     appendNext(client)
