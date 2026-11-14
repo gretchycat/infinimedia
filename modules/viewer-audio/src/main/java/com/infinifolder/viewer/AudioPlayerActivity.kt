@@ -2059,7 +2059,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             onAddToPlaylist = { showAddTracksDialog() }
             onRemoveFromPlaylist = { showPlaylistRemoveActions() }
             onSelectPlaylistItem = { showPlaylistSelectionActions() }
-            onMorePlaylistActions = { showPlaylistActionsDialog() }
+            onListOptions = { showPlaylistOptionsDialog() }
         }
         dockedSubWindow.addView(dockedBottomBarView)
     }
@@ -2120,7 +2120,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             onAddToPlaylist = { showAddTracksDialog() }
             onRemoveFromPlaylist = { showPlaylistRemoveActions() }
             onSelectPlaylistItem = { showPlaylistSelectionActions() }
-            onMorePlaylistActions = { showPlaylistActionsDialog() }
+            onListOptions = { showPlaylistOptionsDialog() }
         }
         detailsWindow.addView(detailsBottom, LinearLayout.LayoutParams(-1, -2))
     }
@@ -4030,10 +4030,14 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             .show()
     }
 
-    private fun showPlaylistActionsDialog() {
-        val service = AudioPlayerService.currentService ?: return
+    private fun showPlaylistOptionsDialog() {
+        val service = AudioPlayerService.currentService
+        if (service == null) {
+            Toast.makeText(this, "The playlist service is not ready yet", Toast.LENGTH_SHORT).show()
+            return
+        }
         val items = arrayOf(
-            "Save playlist as JSPF",
+            "Save playlist as JSPF…",
             "Sort by file name",
             "Sort by title",
             "Sort by artist",
@@ -4045,7 +4049,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             "Select currently playing track",
         )
         ThemeManager.createDialogBuilder(this)
-            .setTitle("Playlist actions")
+            .setTitle("Playlist List Options")
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> savePlaylistExternally()

@@ -13,6 +13,17 @@ import android.view.MotionEvent
 import com.infinifolder.theme.ThemeManager
 import java.util.Locale
 
+internal enum class PlaylistBottomAction { ADD, REMOVE, SELECT, LIST_OPTIONS }
+
+/** Hit targets follow the four controls in the PLEDIT bottom strip. */
+internal fun playlistBottomActionAt(nativeX: Float): PlaylistBottomAction? = when {
+    nativeX in 6f..38f -> PlaylistBottomAction.ADD
+    nativeX in 39f..68f -> PlaylistBottomAction.REMOVE
+    nativeX in 69f..97f -> PlaylistBottomAction.SELECT
+    nativeX in 98f..126f -> PlaylistBottomAction.LIST_OPTIONS
+    else -> null
+}
+
 /**
  * Authentic Playlist Window Bottom Bar View.
  * Native dimension is 275 x 38 pixels from PLEDIT.BMP, dynamically scaled
@@ -34,7 +45,7 @@ class WinampPlaylistBottomView @JvmOverloads constructor(
     var onAddToPlaylist: (() -> Unit)? = null
     var onRemoveFromPlaylist: (() -> Unit)? = null
     var onSelectPlaylistItem: (() -> Unit)? = null
-    var onMorePlaylistActions: (() -> Unit)? = null
+    var onListOptions: (() -> Unit)? = null
     private var pressedControl = 0
 
     private var pixelScaledBitmap: Bitmap? = null
@@ -64,30 +75,27 @@ class WinampPlaylistBottomView @JvmOverloads constructor(
     init {
         isClickable = true
         isFocusable = true
-        contentDescription = "Playlist controls: Add media, remove selected tracks, select tracks, or open playlist actions."
-        tooltipText = "Add, remove, select, sort, or manage playlist"
+        contentDescription = "Playlist controls: Add media, remove selected tracks, select tracks, or open List Options to save and manage the playlist."
+        tooltipText = "Add, remove, select, or open playlist List Options"
         setOnTouchListener { _, event ->
             val nativeX = if (width > 0) event.x * NATIVE_WIDTH / width else -1f
-            val control = when {
-                nativeX in 6f..38f -> 1 // ADD in the PLEDIT.BMP control strip.
-                nativeX in 39f..68f -> 2 // REM.
-                nativeX in 69f..97f -> 3 // SEL.
-                nativeX in 98f..126f -> 4 // MISC.
-                else -> 0
-            }
+            val control = playlistBottomActionAt(nativeX)
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    if (control == 0) false else { pressedControl = control; true }
+                    if (control == null) false else { pressedControl = control.ordinal + 1; true }
                 }
                 MotionEvent.ACTION_UP -> {
                     val pressed = pressedControl
                     pressedControl = 0
                     if (pressed == 0) return@setOnTouchListener false
-                    if (pressed == control) {
-                        if (control == 1) onAddToPlaylist?.invoke()
-                        else if (control == 2) onRemoveFromPlaylist?.invoke()
-                        else if (control == 3) onSelectPlaylistItem?.invoke()
-                        else if (control == 4) onMorePlaylistActions?.invoke()
+                    if (pressed == (control?.ordinal ?: -1) + 1) {
+                        when (control) {
+                            PlaylistBottomAction.ADD -> onAddToPlaylist?.invoke()
+                            PlaylistBottomAction.REMOVE -> onRemoveFromPlaylist?.invoke()
+                            PlaylistBottomAction.SELECT -> onSelectPlaylistItem?.invoke()
+                            PlaylistBottomAction.LIST_OPTIONS -> onListOptions?.invoke()
+                            null -> Unit
+                        }
                     }
                     performClick()
                     true
