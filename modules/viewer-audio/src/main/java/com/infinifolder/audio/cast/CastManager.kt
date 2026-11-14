@@ -207,6 +207,9 @@ object CastManager {
             val wasPlaying = player.isPlaying
             val position = player.currentPosition.toLong()
             resumeAfterFailure = wasPlaying
+            // Stop handset playback as soon as the cast session connects. Waiting
+            // until the receiver acknowledges its load can briefly play on both.
+            player.pauseLocalForCast()
             load(track, position, wasPlaying, initial = true)
         }
     }
@@ -379,7 +382,14 @@ object CastManager {
         val player = service ?: return
         val client = remote ?: return
         val mediaServer = server ?: CastMediaServer(player.applicationContext).also { server = it }
-        if (!mediaServer.start()) { player.onCastError("Could not start audio stream"); if (initial) castContext?.sessionManager?.endCurrentSession(true); return }
+        if (!mediaServer.start()) {
+            player.onCastError("Could not start audio stream")
+            if (initial) {
+                castContext?.sessionManager?.endCurrentSession(true)
+                resumeLocalAfterCastFailure(player)
+            }
+            return
+        }
         prepareTask?.cancel(true)
         val sequence = ++loadSequence
         pendingLoad = true
@@ -485,7 +495,10 @@ object CastManager {
         val url = mediaServer.getStreamUrl(track) ?: run {
             pendingLoad = false
             player.onCastError("Connect to Wi-Fi to cast audio")
-            if (initial) castContext?.sessionManager?.endCurrentSession(true)
+            if (initial) {
+                castContext?.sessionManager?.endCurrentSession(true)
+                resumeLocalAfterCastFailure(player)
+            }
             return
         }
         val info = mediaInfo(track, url)
@@ -529,7 +542,7 @@ object CastManager {
                 if (initial) {
                     player.onCastError("Cast device could not load this track")
                     castContext?.sessionManager?.endCurrentSession(true)
-                    if (resumeAfterFailure && !player.isPlaying) player.play()
+                    resumeLocalAfterCastFailure(player)
                 } else player.onCastTrackFailed(track)
             }
         }
@@ -551,6 +564,13 @@ object CastManager {
             client.load(request).setResultCallback { complete(it) }
         }
     }
+
+    private fun resumeLocalAfterCastFailure(player: AudioPlayerService) {
+        val shouldResume = resumeAfterFailure
+        resumeAfterFailure = false
+        if (shouldResume && !player.isPlaying) player.play()
+    }
+
     fun onTrackChanged(track: AudioTrack?) {
         if (track == null) return
         main.post {

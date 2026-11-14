@@ -281,6 +281,10 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private var systemInsetTop = 0
     private var systemInsetRight = 0
     private var systemInsetBottom = 0
+    private var cutoutInsetLeft = 0
+    private var cutoutInsetTop = 0
+    private var cutoutInsetRight = 0
+    private var cutoutInsetBottom = 0
 
     private fun getStatusBarHeight(): Int {
         val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
@@ -292,17 +296,23 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val theme = ThemeManager.getAudioPlayerTheme(this)
         val isWinamp = (theme.id == AppThemeId.WINAMP_CLASSIC || theme.id == AppThemeId.CUSTOM_WSZ)
         val isWmp = theme.id == AppThemeId.WMP_GLASS
+        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val insetLeft = if (landscape) cutoutInsetLeft else systemInsetLeft
+        val insetTop = if (landscape) cutoutInsetTop else systemInsetTop
+        val insetRight = if (landscape) cutoutInsetRight else systemInsetRight
+        val insetBottom = if (landscape) cutoutInsetBottom else systemInsetBottom
         val sidePadding = if (isWmp) 0 else dp(12)
-        val padH = if (isWinamp) 0 else (sidePadding + systemInsetLeft)
-        val padRight = if (isWinamp) 0 else (sidePadding + systemInsetRight)
-        val effectiveTop = if (systemInsetTop > 0) systemInsetTop else getStatusBarHeight()
+        val padH = if (isWinamp) 0 else (sidePadding + insetLeft)
+        val padRight = if (isWinamp) 0 else (sidePadding + insetRight)
+        val effectiveTop = if (landscape) 0 else if (insetTop > 0) insetTop else getStatusBarHeight()
         val isSystemDark = ThemeManager.resolveIsDark(this)
         if (::topInsetArea.isInitialized) {
+            topInsetArea.visibility = if (landscape) View.GONE else View.VISIBLE
             topInsetArea.layoutParams = LinearLayout.LayoutParams(-1, effectiveTop)
             topInsetArea.setBackgroundColor(if (isSystemDark) Color.BLACK else Color.WHITE)
         }
         val padT = if (isWinamp || isWmp) 0 else dp(6)
-        val padB = (if (isWinamp || isWmp) 0 else dp(16)) + systemInsetBottom
+        val padB = (if (isWinamp || isWmp) 0 else dp(16)) + insetBottom
         rootLayout.setPadding(padH, padT, padRight, padB)
     }
 
@@ -420,6 +430,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 if (landscape) controller.hide(android.view.WindowInsets.Type.systemBars())
                 else controller.show(android.view.WindowInsets.Type.systemBars())
             }
+            if (::rootLayout.isInitialized) rootLayout.requestApplyInsets()
             return
         }
         val immersiveFlags = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
@@ -428,6 +439,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val decor = window.decorView
         decor.systemUiVisibility = if (landscape) decor.systemUiVisibility or immersiveFlags
         else decor.systemUiVisibility and immersiveFlags.inv()
+        if (::rootLayout.isInitialized) rootLayout.requestApplyInsets()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -1105,10 +1117,15 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 val safe = if (Build.VERSION.SDK_INT >= 30) {
                     insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
                 } else null
+                val cutout = if (Build.VERSION.SDK_INT >= 28) insets.displayCutout else null
                 systemInsetLeft = safe?.left ?: insets.systemWindowInsetLeft
                 systemInsetTop = safe?.top ?: insets.systemWindowInsetTop
                 systemInsetRight = safe?.right ?: insets.systemWindowInsetRight
                 systemInsetBottom = safe?.bottom ?: insets.systemWindowInsetBottom
+                cutoutInsetLeft = cutout?.safeInsetLeft ?: 0
+                cutoutInsetTop = cutout?.safeInsetTop ?: 0
+                cutoutInsetRight = cutout?.safeInsetRight ?: 0
+                cutoutInsetBottom = cutout?.safeInsetBottom ?: 0
                 updateRootPadding()
                 insets
             }
