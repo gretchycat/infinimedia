@@ -64,8 +64,8 @@ class WinampPlaylistBottomView @JvmOverloads constructor(
     init {
         isClickable = true
         isFocusable = true
-        contentDescription = "Playlist controls: Add, remove, select the playing item, or open miscellaneous actions."
-        tooltipText = "Add, remove, select, or manage playlist"
+        contentDescription = "Playlist controls: Add media, remove selected tracks, select tracks, or open playlist actions."
+        tooltipText = "Add, remove, select, sort, or manage playlist"
         setOnTouchListener { _, event ->
             val nativeX = if (width > 0) event.x * NATIVE_WIDTH / width else -1f
             val control = when {

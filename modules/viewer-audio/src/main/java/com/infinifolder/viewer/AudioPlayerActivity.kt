@@ -215,6 +215,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private var dockedCastBtn: Button? = null
     private var pendingPlaylistInsertion = PlaylistInsertion.END
     private var selectedPlaylistIndex = -1
+    private val selectedPlaylistIndices = linkedSetOf<Int>()
+    private var hasExplicitPlaylistSelection = false
     private var playlistSelectionPending = false
     private val iconThemeManager by lazy { com.infinifolder.theme.IconThemeManager(applicationContext) }
     private val directoryCoverCache = object : android.util.LruCache<String, Bitmap>(8 * 1024) {
@@ -449,6 +451,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     }
 
     private fun handleIntent(intent: Intent?) {
+        selectedPlaylistIndices.clear()
+        hasExplicitPlaylistSelection = false
         retainPersistableReadGrants(intent)
         if (intent?.action == Intent.ACTION_SEND_MULTIPLE) {
             val streams = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM).orEmpty()
@@ -985,8 +989,11 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                                 return
                             }
                             setPlaylistUiLoadStage(loadId, "Adding ${tracks.size} tracks to the playlist…", "phase=enqueue")
+                            val selectedTracks = synchronized(service.playlist) {
+                                selectedPlaylistIndices.mapNotNull { service.playlist.getOrNull(it) }
+                            }
                             service.enqueueAll(tracks, insertion)
-                            if (selectedPlaylistIndex !in service.playlist.indices) selectedPlaylistIndex = service.currentIndex
+                            remapPlaylistSelection(service, selectedTracks)
                             val queued = synchronized(service.playlist) { ArrayList(service.playlist) }
                             playlistUiExpectedTracks = queued.size
                             playlistUiExpectedRows = playlistDisplayRows(queued).size
@@ -2039,8 +2046,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         dockedBottomBarView = WinampPlaylistBottomView(this).apply {
             layoutParams = LinearLayout.LayoutParams(-1, -2)
             onAddToPlaylist = { showAddTracksDialog() }
-            onRemoveFromPlaylist = { removeSelectedPlaylistItem() }
-            onSelectPlaylistItem = { selectCurrentlyPlayingPlaylistItem() }
+            onRemoveFromPlaylist = { showPlaylistRemoveActions() }
+            onSelectPlaylistItem = { showPlaylistSelectionActions() }
             onMorePlaylistActions = { showPlaylistActionsDialog() }
         }
         dockedSubWindow.addView(dockedBottomBarView)
@@ -2100,8 +2107,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         detailsWindow.addView(detailsBody, LinearLayout.LayoutParams(-1, 0, 1f))
         detailsBottom = WinampPlaylistBottomView(this).apply {
             onAddToPlaylist = { showAddTracksDialog() }
-            onRemoveFromPlaylist = { removeSelectedPlaylistItem() }
-            onSelectPlaylistItem = { selectCurrentlyPlayingPlaylistItem() }
+            onRemoveFromPlaylist = { showPlaylistRemoveActions() }
+            onSelectPlaylistItem = { showPlaylistSelectionActions() }
             onMorePlaylistActions = { showPlaylistActionsDialog() }
         }
         detailsWindow.addView(detailsBottom, LinearLayout.LayoutParams(-1, -2))
@@ -2166,6 +2173,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         }
         val curIdx = service.currentIndex
         if (selectedPlaylistIndex !in list.indices) selectedPlaylistIndex = curIdx.takeIf { it in list.indices } ?: -1
+        selectedPlaylistIndices.removeAll { it !in list.indices }
         val currentTrack = list.getOrNull(curIdx)
         val currentTrackKey = currentTrack?.let {
             "$curIdx:${it.uri}:${it.startByte}:${it.lengthBytes}"
@@ -2198,8 +2206,12 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                         val index = displayRow.index
                         val track = displayRow.track
                         val isCurrent = (index == curIdx)
-                        row.setBackgroundColor(if (isCurrent) theme.selectionBackground else Color.TRANSPARENT)
-                        (row.getChildAt(0) as? TextView)?.setTextColor(if (isCurrent) theme.selectionText else theme.textSecondary)
+                        val isSelected = index in selectedPlaylistIndices
+                        row.setBackgroundColor(if (isCurrent || isSelected) theme.selectionBackground else Color.TRANSPARENT)
+                        (row.getChildAt(0) as? TextView)?.apply {
+                            text = (if (isSelected) "✓ " else "  ") + String.format("%2d. ", index + 1)
+                            setTextColor(if (isCurrent || isSelected) theme.selectionText else theme.textSecondary)
+                        }
                         val displayTitle = if (!track.artist.isNullOrBlank() && track.artist != "Unknown Artist") {
                             "${track.artist} - ${track.title}"
                         } else track.title
@@ -2211,11 +2223,11 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                         }
                         (row.getChildAt(1) as? TextView)?.apply {
                             text = (if (isCurrent) "▶ " else "") + mediaPrefix + displayTitle
-                            setTextColor(if (isCurrent) theme.selectionText else theme.textPrimary)
+                            setTextColor(if (isCurrent || isSelected) theme.selectionText else theme.textPrimary)
                         }
                         (row.getChildAt(2) as? TextView)?.apply {
                             text = if (track.durationMs > 0) formatTime(track.durationMs.toInt()) else "--"
-                            setTextColor(if (isCurrent) theme.selectionText else theme.textSecondary)
+                            setTextColor(if (isCurrent || isSelected) theme.selectionText else theme.textSecondary)
                         }
                     }
                 }
@@ -2255,17 +2267,24 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                         val index = displayRow.index
                         val track = displayRow.track
                         val isCurrent = index == curIdx
+                        val isSelected = index in selectedPlaylistIndices
                         val row = LinearLayout(this).apply {
                             orientation = LinearLayout.HORIZONTAL
                             gravity = Gravity.CENTER_VERTICAL
                             setPadding(dp(8), dp(4), dp(8), dp(4))
-                            contentDescription = "${track.mediaKind.name.lowercase()} ${track.title}. Hold and move to reorder; hold and release for track options."
+                            contentDescription = "${track.mediaKind.name.lowercase()} ${track.title}" +
+                                (if (isSelected) ". Selected" else "") +
+                                ". Hold and move to reorder; hold and release for track options."
                             tag = index
                             isClickable = true
                             isFocusable = true
-                            setBackgroundColor(if (isCurrent) theme.selectionBackground else Color.TRANSPARENT)
+                            setBackgroundColor(if (isSelected || isCurrent) theme.selectionBackground else Color.TRANSPARENT)
                             setOnClickListener {
                                 selectedPlaylistIndex = index
+                                if (!hasExplicitPlaylistSelection) {
+                                    selectedPlaylistIndices.clear()
+                                    selectedPlaylistIndices.add(index)
+                                }
                                 service.jumpTo(index)
                                 updateDockedPlaylist()
                             }
@@ -2291,10 +2310,10 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                         }
                         installPlaylistGesture(row, index)
                         row.addView(TextView(this).apply {
-                            text = String.format("%2d. ", index + 1)
+                            text = (if (isSelected) "✓ " else "  ") + String.format("%2d. ", index + 1)
                             textSize = 11f
                             typeface = Typeface.MONOSPACE
-                            setTextColor(if (isCurrent) theme.selectionText else theme.textSecondary)
+                            setTextColor(if (isSelected || isCurrent) theme.selectionText else theme.textSecondary)
                         }, LinearLayout.LayoutParams(-2, -2))
                         val displayTitle = if (!track.artist.isNullOrBlank() && track.artist != "Unknown Artist") {
                             "${track.artist} - ${track.title}"
@@ -2311,14 +2330,14 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                             typeface = Typeface.MONOSPACE
                             maxLines = 1
                             ellipsize = android.text.TextUtils.TruncateAt.END
-                            setTextColor(if (isCurrent) theme.selectionText else theme.textPrimary)
+                            setTextColor(if (isSelected || isCurrent) theme.selectionText else theme.textPrimary)
                         }, LinearLayout.LayoutParams(0, -2, 1f))
                         row.addView(TextView(this).apply {
                             text = if (track.durationMs > 0) formatTime(track.durationMs.toInt()) else "--"
                             textSize = 10f
                             typeface = Typeface.MONOSPACE
                             gravity = Gravity.END
-                            setTextColor(if (isCurrent) theme.selectionText else theme.textSecondary)
+                            setTextColor(if (isSelected || isCurrent) theme.selectionText else theme.textSecondary)
                         }, LinearLayout.LayoutParams(-2, -2))
                         dockedPlaylistItems.addView(row)
                     }
@@ -3760,16 +3779,16 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             .setTitle("Playlist")
             .setAdapter(adapter) { _, which ->
                 selectedPlaylistIndex = which
+                if (!hasExplicitPlaylistSelection) {
+                    selectedPlaylistIndices.clear()
+                    selectedPlaylistIndices.add(which)
+                }
                 service.jumpTo(which)
                 updateDockedPlaylist()
+                refreshPlaylistDialog()
             }
             .setPositiveButton("Add to playlist") { _, _ -> showAddTracksDialog() }
-            .setNeutralButton("Remove selected") { _, _ ->
-                if (service.removePlaylistItem(selectedPlaylistIndex)) {
-                    selectedPlaylistIndex = service.currentIndex
-                    updateDockedPlaylist()
-                }
-            }
+            .setNeutralButton("Remove selected") { _, _ -> removeSelectedPlaylistItem() }
             .setNegativeButton("Close", null)
             .create()
         playlistDialog = dialog
@@ -3794,34 +3813,112 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private fun removeSelectedPlaylistItem() {
         val service = AudioPlayerService.currentService ?: return
-        if (selectedPlaylistIndex !in service.playlist.indices) {
-            Toast.makeText(this, "Select a playlist track to remove", Toast.LENGTH_SHORT).show()
+        val selected = selectedPlaylistIndices.ifEmpty {
+            if (!hasExplicitPlaylistSelection) {
+                selectedPlaylistIndex.takeIf { it in service.playlist.indices }?.let { setOf(it) }.orEmpty()
+            } else emptySet()
+        }
+        if (selected.isEmpty()) {
+            Toast.makeText(this, "Select playlist tracks to remove", Toast.LENGTH_SHORT).show()
             return
         }
-        if (service.removePlaylistItem(selectedPlaylistIndex)) {
+        if (service.removePlaylistItems(selected)) {
+            selectedPlaylistIndices.clear()
+            hasExplicitPlaylistSelection = true
             selectedPlaylistIndex = service.currentIndex
-            updateDockedPlaylist()
+            updateDockedPlaylist(forceRebuild = true)
             refreshPlaylistDialog()
         }
     }
 
-    private fun selectCurrentlyPlayingPlaylistItem() {
+    private fun showPlaylistRemoveActions() {
         val service = AudioPlayerService.currentService ?: return
-        val index = service.currentIndex
-        if (index !in service.playlist.indices) {
-            Toast.makeText(this, "There is no current playlist item to select", Toast.LENGTH_SHORT).show()
-            return
-        }
-        selectedPlaylistIndex = index
-        updateDockedPlaylist()
-        refreshPlaylistDialog()
-        scrollToSelectedPlaylistItem()
+        val playlistSize = synchronized(service.playlist) { service.playlist.size }
+        val selectedCount = selectedPlaylistIndices.size.takeIf { it > 0 }
+            ?: if (!hasExplicitPlaylistSelection && selectedPlaylistIndex in 0 until playlistSize) 1 else 0
+        val items = arrayOf(
+            "Remove selected ($selectedCount)",
+            "Keep only the current track",
+            "Clear playlist…",
+        )
+        ThemeManager.createDialogBuilder(this)
+            .setTitle("Remove from playlist")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> removeSelectedPlaylistItem()
+                    1 -> {
+                        val current = service.currentIndex
+                        if (current in service.playlist.indices) {
+                            val remove = service.playlist.indices.filter { it != current }.toSet()
+                            if (service.removePlaylistItems(remove)) {
+                                selectedPlaylistIndices.clear()
+                                hasExplicitPlaylistSelection = true
+                                selectedPlaylistIndex = service.currentIndex
+                                updateDockedPlaylist(forceRebuild = true)
+                                refreshPlaylistDialog()
+                            }
+                        }
+                    }
+                    2 -> confirmClearPlaylist(service)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showPlaylistSelectionActions() {
+        val service = AudioPlayerService.currentService ?: return
+        val items = arrayOf(
+            "Select currently playing track",
+            "Select all tracks",
+            "Invert selection",
+            "Select none",
+        )
+        ThemeManager.createDialogBuilder(this)
+            .setTitle("Select playlist tracks")
+            .setItems(items) { _, which ->
+                synchronized(service.playlist) {
+                    when (which) {
+                        0 -> {
+                            hasExplicitPlaylistSelection = true
+                            selectedPlaylistIndices.clear()
+                            if (service.currentIndex in service.playlist.indices) selectedPlaylistIndices.add(service.currentIndex)
+                        }
+                        1 -> {
+                            hasExplicitPlaylistSelection = true
+                            selectedPlaylistIndices.clear()
+                            selectedPlaylistIndices.addAll(service.playlist.indices)
+                        }
+                        2 -> {
+                            hasExplicitPlaylistSelection = true
+                            val old = selectedPlaylistIndices.toSet()
+                            selectedPlaylistIndices.clear()
+                            selectedPlaylistIndices.addAll(service.playlist.indices.filterNot { it in old })
+                        }
+                        3 -> {
+                            hasExplicitPlaylistSelection = true
+                            selectedPlaylistIndices.clear()
+                        }
+                    }
+                }
+                if (which == 0) selectedPlaylistIndex = service.currentIndex
+                updateDockedPlaylist()
+                refreshPlaylistDialog()
+                if (which == 0) scrollToSelectedPlaylistItem()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun showPlaylistActionsDialog() {
         val service = AudioPlayerService.currentService ?: return
         val items = arrayOf(
             "Save playlist as JSPF",
+            "Sort by file name",
+            "Sort by title",
+            "Sort by artist",
+            "Sort by album",
+            "Reverse playlist order",
             "Shuffle: ${if (service.isShuffleEnabled) "On" else "Off"}",
             "Repeat: ${service.repeatMode.name.lowercase().replaceFirstChar { it.uppercase() }}",
             "Clear playlist",
@@ -3832,18 +3929,26 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> savePlaylistExternally()
-                    1 -> {
+                    1 -> sortPlaylistAndRemapSelection(service, PlaylistSortOrder.FILE_NAME)
+                    2 -> sortPlaylistAndRemapSelection(service, PlaylistSortOrder.TITLE)
+                    3 -> sortPlaylistAndRemapSelection(service, PlaylistSortOrder.ARTIST)
+                    4 -> sortPlaylistAndRemapSelection(service, PlaylistSortOrder.ALBUM)
+                    5 -> reversePlaylistAndRemapSelection(service)
+                    6 -> {
                         service.toggleShuffle()
                         updateDockedPlaylist(forceRebuild = true)
                         Toast.makeText(this, "Shuffle ${if (service.isShuffleEnabled) "on" else "off"}", Toast.LENGTH_SHORT).show()
                     }
-                    2 -> {
+                    7 -> {
                         service.cycleRepeatMode()
                         Toast.makeText(this, "Repeat ${service.repeatMode.name.lowercase()}", Toast.LENGTH_SHORT).show()
                     }
-                    3 -> confirmClearPlaylist(service)
-                    4 -> {
+                    8 -> confirmClearPlaylist(service)
+                    9 -> {
                         selectedPlaylistIndex = service.currentIndex
+                        hasExplicitPlaylistSelection = true
+                        selectedPlaylistIndices.clear()
+                        if (selectedPlaylistIndex in service.playlist.indices) selectedPlaylistIndices.add(selectedPlaylistIndex)
                         updateDockedPlaylist()
                         scrollToSelectedPlaylistItem()
                     }
@@ -3851,6 +3956,41 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             }
             .setNegativeButton("Close", null)
             .show()
+    }
+
+    private fun sortPlaylistAndRemapSelection(service: AudioPlayerService, order: PlaylistSortOrder) {
+        val selectedTracks = synchronized(service.playlist) {
+            selectedPlaylistIndices.mapNotNull { service.playlist.getOrNull(it) }
+        }
+        service.sortPlaylist(order)
+        remapPlaylistSelection(service, selectedTracks)
+        updateDockedPlaylist(forceRebuild = true)
+        refreshPlaylistDialog()
+    }
+
+    private fun reversePlaylistAndRemapSelection(service: AudioPlayerService) {
+        val selectedTracks = synchronized(service.playlist) {
+            selectedPlaylistIndices.mapNotNull { service.playlist.getOrNull(it) }
+        }
+        service.reversePlaylist()
+        remapPlaylistSelection(service, selectedTracks)
+        updateDockedPlaylist(forceRebuild = true)
+        refreshPlaylistDialog()
+    }
+
+    private fun remapPlaylistSelection(service: AudioPlayerService, selectedTracks: List<AudioTrack>) {
+        selectedPlaylistIndices.clear()
+        synchronized(service.playlist) {
+            val claimed = mutableSetOf<Int>()
+            selectedTracks.forEach { track ->
+                val index = service.playlist.indices.firstOrNull { it !in claimed && service.playlist[it] === track }
+                if (index != null) {
+                    selectedPlaylistIndices.add(index)
+                    claimed.add(index)
+                }
+            }
+        }
+        selectedPlaylistIndex = service.currentIndex
     }
 
     private fun confirmClearPlaylist(service: AudioPlayerService) {
@@ -3864,6 +4004,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             .setPositiveButton("Clear") { _, _ ->
                 service.clearPlaylist()
                 selectedPlaylistIndex = -1
+                selectedPlaylistIndices.clear()
+                hasExplicitPlaylistSelection = true
                 updateDockedPlaylist(forceRebuild = true)
                 refreshPlaylistDialog()
             }
@@ -3883,6 +4025,16 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private fun reorderPlaylistItem(from: Int, to: Int) {
         val service = AudioPlayerService.currentService ?: return
         if (!service.movePlaylistItem(from, to)) return
+        val movedSelection = selectedPlaylistIndices.mapTo(linkedSetOf()) { index ->
+            when {
+                index == from -> to
+                from < to && index in (from + 1)..to -> index - 1
+                from > to && index in to until from -> index + 1
+                else -> index
+            }
+        }
+        selectedPlaylistIndices.clear()
+        selectedPlaylistIndices.addAll(movedSelection)
         selectedPlaylistIndex = to
         updateDockedPlaylist(forceRebuild = true)
         refreshPlaylistDialog()
@@ -3962,11 +4114,24 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private fun showPlaylistItemMenu(anchor: View, index: Int) {
         val service = AudioPlayerService.currentService ?: return
-        if (!synchronized(service.playlist) { index in service.playlist.indices }) return
+        val track = synchronized(service.playlist) { service.playlist.getOrNull(index) } ?: return
         selectedPlaylistIndex = index
         PopupMenu(this, anchor).apply {
+            val selectionAction = if (index in selectedPlaylistIndices) "Deselect track" else "Select track"
+            menu.add(selectionAction).setOnMenuItemClickListener {
+                hasExplicitPlaylistSelection = true
+                if (!selectedPlaylistIndices.add(index)) selectedPlaylistIndices.remove(index)
+                updateDockedPlaylist()
+                true
+            }
+            menu.add("Track information").setOnMenuItemClickListener {
+                showPlaylistTrackInfo(track)
+                true
+            }
             menu.add("Remove from playlist").setOnMenuItemClickListener {
                 if (service.removePlaylistItem(index)) {
+                    selectedPlaylistIndices.clear()
+                    hasExplicitPlaylistSelection = true
                     selectedPlaylistIndex = service.currentIndex
                     updateDockedPlaylist(forceRebuild = true)
                     refreshPlaylistDialog()
@@ -3977,19 +4142,41 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         }
     }
 
+    private fun showPlaylistTrackInfo(track: AudioTrack) {
+        val details = buildString {
+            appendLine(track.title)
+            track.artist?.takeIf { it.isNotBlank() }?.let { appendLine("Artist: $it") }
+            track.album?.takeIf { it.isNotBlank() }?.let { appendLine("Album: $it") }
+            appendLine("File: ${track.fileName}")
+            track.sourceMimeType?.let { appendLine("Type: $it") }
+            appendLine("Duration: ${if (track.durationMs > 0) formatTime(track.durationMs) else "Unknown"}")
+            track.bitrateKbps?.let { appendLine("Bitrate: $it kb/s") }
+            track.sampleRateHz?.let { appendLine("Sample rate: ${it / 1000} kHz") }
+            track.channels?.let { appendLine("Channels: $it") }
+        }
+        ThemeManager.createDialogBuilder(this)
+            .setTitle("Track information")
+            .setMessage(details.trim())
+            .setPositiveButton("Close", null)
+            .show()
+    }
+
     private fun refreshPlaylistDialog() {
         val dialog = playlistDialog ?: return
         val adapter = playlistDialogAdapter ?: return
         val service = AudioPlayerService.currentService ?: return
         val list = synchronized(service.playlist) { ArrayList(service.playlist) }
         val titles = list.mapIndexed { index, track ->
-            val mark = if (index == service.currentIndex) "▶ " else "   "
+            val currentMark = if (index == service.currentIndex) "▶" else " "
+            val selectedMark = if (index in selectedPlaylistIndices) "✓" else " "
             val title = if (!track.artist.isNullOrBlank() && track.artist != "Unknown Artist") "${track.artist} - ${track.title}" else track.title
             val duration = if (track.durationMs > 0) formatTime(track.durationMs) else "--"
-            "$mark${index + 1}. $title  $duration"
+            "$currentMark$selectedMark ${index + 1}. $title  $duration"
         }
-        dialog.setTitle("Playlist (${list.size} tracks)")
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.isEnabled = selectedPlaylistIndex in list.indices
+        val selectedCount = selectedPlaylistIndices.size.takeIf { it > 0 }
+            ?: if (!hasExplicitPlaylistSelection && selectedPlaylistIndex in list.indices) 1 else 0
+        dialog.setTitle("Playlist (${list.size} tracks, $selectedCount selected)")
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.isEnabled = selectedCount > 0
         adapter.clear()
         adapter.addAll(titles)
     }
@@ -4020,6 +4207,10 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 exitLandscapeVideoFullscreen()
             }
             selectedPlaylistIndex = index.takeIf { it in 0 until total } ?: -1
+            if (!hasExplicitPlaylistSelection) {
+                selectedPlaylistIndices.clear()
+                if (selectedPlaylistIndex >= 0) selectedPlaylistIndices.add(selectedPlaylistIndex)
+            }
             updateTrackView(track)
             updateControlsAppearance()
             updateTimeDisplay()

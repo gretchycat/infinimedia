@@ -606,6 +606,85 @@ class AudioPlayerService : Service() {
         return true
     }
 
+    /** Remove a selected set in one queue update, without restarting the player per row. */
+    fun removePlaylistItems(indices: Set<Int>): Boolean {
+        val targets = synchronized(playlist) { indices.filter { it in playlist.indices }.toSortedSet() }
+        if (targets.isEmpty()) return false
+        invalidateGapless()
+        val removedCurrent: Boolean
+        val isEmpty: Boolean
+        synchronized(playlist) {
+            val oldCurrent = currentIndex
+            removedCurrent = oldCurrent in targets
+            val removedAtOrBeforeCurrent = targets.count { it <= oldCurrent }
+            for (index in targets.toList().asReversed()) {
+                val removed = playlist.removeAt(index)
+                val originalIndex = originalPlaylist.indexOfFirst { sameTrack(it, removed) }
+                if (originalIndex >= 0) originalPlaylist.removeAt(originalIndex)
+            }
+            currentIndex = when {
+                playlist.isEmpty() -> -1
+                removedCurrent -> (oldCurrent - removedAtOrBeforeCurrent).coerceIn(0, playlist.lastIndex)
+                else -> oldCurrent - targets.count { it < oldCurrent }
+            }
+            isEmpty = playlist.isEmpty()
+        }
+        if (isEmpty) {
+            notifyPlaylistUpdated()
+            stopPlayback()
+        } else if (removedCurrent) {
+            loadAndPlayCurrent()
+        } else {
+            notifyPlaylistUpdated()
+            startBackgroundMetadataScanner(forceRestart = false)
+            scheduleGapless()
+        }
+        return true
+    }
+
+    /** Sort the visible queue and make that order the new shuffle restore order. */
+    internal fun sortPlaylist(order: PlaylistSortOrder) {
+        synchronized(playlist) {
+            if (playlist.size < 2) return
+            currentIndex = when (order) {
+                PlaylistSortOrder.FILE_NAME -> sortPlaylistByFileName(
+                    playlist, currentIndex, { it.fileName }, { it.startByte })
+                PlaylistSortOrder.TITLE -> sortPlaylist(playlist, currentIndex) { a, b ->
+                    comparePlaylistText(a.title, b.title).takeIf { it != 0 }
+                        ?: comparePlaylistText(a.artist.orEmpty(), b.artist.orEmpty())
+                }
+                PlaylistSortOrder.ARTIST -> sortPlaylist(playlist, currentIndex) { a, b ->
+                    comparePlaylistText(a.artist.orEmpty(), b.artist.orEmpty()).takeIf { it != 0 }
+                        ?: comparePlaylistText(a.title, b.title)
+                }
+                PlaylistSortOrder.ALBUM -> sortPlaylist(playlist, currentIndex) { a, b ->
+                    comparePlaylistText(a.album.orEmpty(), b.album.orEmpty()).takeIf { it != 0 }
+                        ?: comparePlaylistText(a.title, b.title)
+                }
+            }
+            originalPlaylist.clear()
+            originalPlaylist.addAll(playlist)
+            hasManualPlaylistOrder = true
+        }
+        notifyPlaylistUpdated()
+        scheduleGapless()
+    }
+
+    internal fun reversePlaylist() {
+        synchronized(playlist) {
+            if (playlist.size < 2) return
+            currentIndex = reversePlaylist(playlist, currentIndex)
+            originalPlaylist.clear()
+            originalPlaylist.addAll(playlist)
+            hasManualPlaylistOrder = true
+        }
+        notifyPlaylistUpdated()
+        scheduleGapless()
+    }
+
+    private fun comparePlaylistText(left: String, right: String): Int =
+        String.CASE_INSENSITIVE_ORDER.compare(left.trim(), right.trim())
+
     /** Clear the persisted working queue and stop local or remote playback. */
     fun clearPlaylist(): Boolean {
         invalidateGapless()

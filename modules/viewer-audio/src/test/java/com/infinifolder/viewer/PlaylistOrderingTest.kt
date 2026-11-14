@@ -46,4 +46,23 @@ class PlaylistOrderingTest {
         assertEquals(0, playlistInsertionIndex(0, -1, PlaylistInsertion.AFTER_CURRENT))
         assertEquals(5, playlistInsertionIndex(5, -1, PlaylistInsertion.AFTER_CURRENT))
     }
+
+    @Test fun metadataSortAndReverseKeepTheSelectedDuplicateOccurrence() {
+        val tracks = mutableListOf(
+            Track("z.mp3", "Bravo", 1),
+            Track("a.mp3", "Alpha", 2),
+            Track("b.mp3", "Alpha", 3),
+        )
+        var current = sortPlaylist(tracks, 2) { left, right ->
+            String.CASE_INSENSITIVE_ORDER.compare(left.title, right.title)
+        }
+        assertEquals(listOf(2, 3, 1), tracks.map { it.id })
+        assertEquals(1, current)
+        assertEquals(3, tracks[current].id)
+
+        current = reversePlaylist(tracks, current)
+        assertEquals(listOf(1, 3, 2), tracks.map { it.id })
+        assertEquals(1, current)
+        assertEquals(3, tracks[current].id)
+    }
 }
