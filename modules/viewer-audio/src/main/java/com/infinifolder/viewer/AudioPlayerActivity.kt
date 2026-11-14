@@ -333,6 +333,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     override fun onResume() {
         super.onResume()
+        updateSystemBarsForOrientation()
         isPlayerResumed = true
         skinAnimationHost?.close()
         skinAnimationHost = ThemeManager.registerSkinAnimationHost {
@@ -401,6 +402,32 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         }
         configureSkinLayout()
         applyTheme(ThemeManager.getAudioPlayerTheme(this))
+        updateSystemBarsForOrientation()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) updateSystemBarsForOrientation()
+    }
+
+    /** Hide Android's status and navigation bars in landscape, restoring them in portrait. */
+    @Suppress("DEPRECATION")
+    private fun updateSystemBarsForOrientation() {
+        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.insetsController?.let { controller ->
+                controller.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                if (landscape) controller.hide(android.view.WindowInsets.Type.systemBars())
+                else controller.show(android.view.WindowInsets.Type.systemBars())
+            }
+            return
+        }
+        val immersiveFlags = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+        val decor = window.decorView
+        decor.systemUiVisibility = if (landscape) decor.systemUiVisibility or immersiveFlags
+        else decor.systemUiVisibility and immersiveFlags.inv()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -3016,6 +3043,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         }
         updateControlsAppearance()
         if (isWmp) refreshWmpControls()
+        updateSystemBarsForOrientation()
     }
 
     private fun toggleCurrentMediaPlayback() {
