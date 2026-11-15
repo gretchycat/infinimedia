@@ -13,6 +13,8 @@ class VisualFrameGeometryTest {
         assertEquals(5, patches.count { it.sheet == "gen" })
         assertEquals(VisualFrameGeometry.Box(225, 0, 325, 40), patches[2].destination)
         assertTrue(patches[7].mirror)
+        assertEquals(VisualFrameGeometry.Box(127, 43, 134, 69), patches[5].source)
+        assertEquals(VisualFrameGeometry.Box(7, 55, 118, 69), patches[8].source)
     }
 
     @Test fun edgesCoverEveryFramePixelWithoutCoveringTheContent() {

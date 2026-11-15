@@ -23,6 +23,19 @@ public class ThemeRuntimeCheck {
         return frame;
     }
     static byte[] bytes(String name) throws Exception { return Files.readAllBytes(root.resolve(name)); }
+    static int[] oraDimensions(byte[] bytes) throws Exception {
+        try (java.util.zip.ZipInputStream zip = new java.util.zip.ZipInputStream(new ByteArrayInputStream(bytes))) {
+            for (java.util.zip.ZipEntry entry; (entry = zip.getNextEntry()) != null;) {
+                if (!"stack.xml".equals(entry.getName())) continue;
+                String xml = new String(zip.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                java.util.regex.Matcher width = java.util.regex.Pattern.compile("\\bw=['\\\"](\\d+)").matcher(xml);
+                java.util.regex.Matcher height = java.util.regex.Pattern.compile("\\bh=['\\\"](\\d+)").matcher(xml);
+                check(width.find() && height.find(), "ORA canvas dimensions in stack.xml");
+                return new int[]{Integer.parseInt(width.group(1)), Integer.parseInt(height.group(1))};
+            }
+        }
+        throw new AssertionError("ORA stack.xml is missing");
+    }
     static int[] pixels(Bitmap b) { int[] p = new int[b.getWidth()*b.getHeight()]; b.getPixels(p,0,b.getWidth(),0,0,b.getWidth(),b.getHeight()); return p; }
     static void png(Bitmap b, String name) throws Exception { try (OutputStream stream=Files.newOutputStream(out.resolve(name))) { check(b.compress(Bitmap.CompressFormat.PNG,100,stream),"PNG export"); } }
     static byte[] svg(boolean reverse, int size) {
@@ -71,7 +84,8 @@ public class ThemeRuntimeCheck {
         before=pixels(ora.getBitmap());after=before.clone();
         ora.getAnimation().render(120_000_000L,after,true);
         check(!Arrays.equals(before,after),"Extended ORA palette ranges change pixels");
-        check(ora.getBitmap().getWidth()==1933 && ora.getBitmap().getHeight()==814,"Extended ORA canvas dimensions retained");
+        int[] oraSize=oraDimensions(oraBytes);
+        check(ora.getBitmap().getWidth()==oraSize[0] && ora.getBitmap().getHeight()==oraSize[1],"Extended ORA canvas dimensions retained");
         pass("extended-ora-palette-cycle-direct-decode");
         Bitmap input=Bitmap.createBitmap(4,3,Bitmap.Config.ARGB_8888);input.eraseColor(Color.MAGENTA);
         ByteArrayOutputStream stream=new ByteArrayOutputStream();input.compress(Bitmap.CompressFormat.PNG,100,stream);
@@ -94,8 +108,8 @@ public class ThemeRuntimeCheck {
             Paint paint=new Paint();paint.setFilterBitmap(false);
             WinampVisualFrameLayout.drawFrame(new Canvas(frame),width,height,false,video,gen,paint,Color.DKGRAY,Color.GRAY);
             check(frame.getPixel(width/2,title+10)==Color.BLACK,"Content remains unobscured");
-            check(frame.getPixel(0,title+1)==gen.getPixel(127,42),"GEN left edge source");
-            check(frame.getPixel(width-1,title+1)==gen.getPixel(147,42),"GEN right edge source width="+width+" actual="+Integer.toHexString(frame.getPixel(width-1,title+1))+" source="+Integer.toHexString(gen.getPixel(147,42)));
+            check(frame.getPixel(0,title+1)==gen.getPixel(127,43),"GEN left edge source");
+            check(frame.getPixel(width-1,title+1)==gen.getPixel(147,43),"GEN right edge source width="+width+" actual="+Integer.toHexString(frame.getPixel(width-1,title+1))+" source="+Integer.toHexString(gen.getPixel(147,43)));
 
             png(frame,"visual-media-frame-"+width+".png");
         }
@@ -128,10 +142,10 @@ public class ThemeRuntimeCheck {
         });
     }
     static void lifecycleChecks() throws Exception {
-        final byte[] ora=bytes("theme/main.ora");final int[] changed={0};
+        final byte[] ora=bytes("theme/main.ora");final int[] changed={0};final int[] oraSize=oraDimensions(ora);
         SkinImageCache cache=new SkinImageCache(name->Collections.singletonList(new Pair<>("main.ora",ora)),()->{changed[0]++;return Unit.INSTANCE;});
         Bitmap image=cache.bitmap("main.bmp");check(image!=null,"Cache image decoded");
-        check(image.getWidth()==1933 && image.getHeight()==814,"Complete ORA faceplate retained in skin cache");
+        check(image.getWidth()==oraSize[0] && image.getHeight()==oraSize[1],"Complete ORA faceplate retained in skin cache");
         check(image==cache.bitmap("main.ora"),"Logical role shares cache");
         cache.setPlaying(true);Handler main=new Handler(Looper.getMainLooper());
         later(main,450,()->{

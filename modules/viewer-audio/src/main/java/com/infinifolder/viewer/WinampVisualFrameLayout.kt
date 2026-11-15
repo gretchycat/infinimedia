@@ -59,8 +59,10 @@ internal class WinampVisualFrameLayout(context: Context) : LinearLayout(context)
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
+    override fun dispatchDraw(canvas: Canvas) {
+        super.dispatchDraw(canvas)
+        // The body hosts video/art views. Draw the frame afterward so a
+        // SurfaceView or scaled image can never paint over its border edges.
         paint.isFilterBitmap = ThemeManager.smoothSkinScaling
         drawFrame(canvas, width, height, body.visibility == View.GONE,
             ThemeManager.skinBitmap("video.bmp"), ThemeManager.skinBitmap("gen.bmp"),

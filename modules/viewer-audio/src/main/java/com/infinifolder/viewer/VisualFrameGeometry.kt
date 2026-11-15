@@ -34,11 +34,16 @@ internal object VisualFrameGeometry {
                 val side = inset.side.coerceAtMost(width / 2)
                 val bottom = inset.bottom.coerceAtMost(height - title)
                 val y = height - bottom
-                patch("gen", Box(127, 42, 134, 70), Box(0, title, side, y))
-                patch("gen", Box(141, 42, 148, 70), Box(width - side, title, width, y))
+                // Exclude the sprite sheet's one-pixel gutters. At player scale
+                // those rows become visible black breaks between the title,
+                // vertical rails, and lower corners.
+                patch("gen", Box(127, 43, 134, 69), Box(0, title, side, y))
+                patch("gen", Box(141, 43, 148, 69), Box(width - side, title, width, y))
                 // GEN's lower-right corner also supplies the mirrored lower-left corner.
                 patch("gen", Box(118, 55, 125, 69), Box(0, y, side, height), mirror = true)
-                patch("gen", Box(0, 55, 118, 69), Box(side, y, width - side, height))
+                // The first seven columns are the left corner/gutter. Corners
+                // are rendered separately, so stretching them creates a gap.
+                patch("gen", Box(7, 55, 118, 69), Box(side, y, width - side, height))
                 patch("gen", Box(118, 55, 125, 69), Box(width - side, y, width, height))
             }
         }
