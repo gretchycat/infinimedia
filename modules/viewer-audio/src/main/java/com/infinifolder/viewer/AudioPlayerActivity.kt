@@ -205,6 +205,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private lateinit var dockedLeftBorder: WinampPlaylistBorderView
     private lateinit var dockedRightBorder: WinampPlaylistBorderView
     private lateinit var dockedPlaylistScroll: ScrollView
+    private lateinit var dockedPlaylistScrollHandle: PlaylistScrollHandleView
     private lateinit var dockedPlaylistLoadingOverlay: FrameLayout
     private lateinit var dockedPlaylistLoadingMessage: TextView
     private lateinit var dockedBottomBarView: WinampPlaylistBottomView
@@ -1992,8 +1993,12 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         // The ScrollView belongs strictly to JUST the playlist items
         dockedPlaylistScroll = ScrollView(this).apply {
             isFillViewport = true
+            setPadding(0, 0, dp(18), 0)
             layoutParams = FrameLayout.LayoutParams(-1, -1)
-            setOnScrollChangeListener { _, _, _, _, _ -> loadVisibleDirectoryImages() }
+            setOnScrollChangeListener { _, _, _, _, _ ->
+                loadVisibleDirectoryImages()
+                if (::dockedPlaylistScrollHandle.isInitialized) dockedPlaylistScrollHandle.invalidate()
+            }
         }
 
         dockedPlaylistItems = LinearLayout(this).apply {
@@ -2005,6 +2010,9 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
         }
         playlistViewport.addView(dockedPlaylistScroll)
+        dockedPlaylistScrollHandle = PlaylistScrollHandleView(this, dockedPlaylistScroll)
+        playlistViewport.addView(dockedPlaylistScrollHandle,
+            FrameLayout.LayoutParams(dp(18), -1, Gravity.END))
         dockedPlaylistLoadingOverlay = FrameLayout(this).apply {
             visibility = View.GONE
             isClickable = true
@@ -2362,7 +2370,10 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         // Add the folder rows immediately; resolve only cover URIs that are on screen.
         // This keeps a large recursive selection from serially opening every album
         // image before the playlist is usable.
-        dockedPlaylistScroll.post { loadVisibleDirectoryImages() }
+        dockedPlaylistScroll.post {
+            dockedPlaylistScrollHandle.invalidate()
+            loadVisibleDirectoryImages()
+        }
 
         if (::dockedBottomBarView.isInitialized) {
             dockedBottomBarView.totalDurationMs = totalMs

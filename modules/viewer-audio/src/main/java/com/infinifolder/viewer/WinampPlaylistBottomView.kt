@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.util.AttributeSet
 import android.view.View
@@ -47,6 +48,7 @@ class WinampPlaylistBottomView @JvmOverloads constructor(
     var onSelectPlaylistItem: (() -> Unit)? = null
     var onListOptions: (() -> Unit)? = null
     private var pressedControl = 0
+    private var pressedControlBitmap: Bitmap? = null
 
     private var pixelScaledBitmap: Bitmap? = null
     private var pixelScaledCanvas: Canvas? = null
@@ -82,11 +84,19 @@ class WinampPlaylistBottomView @JvmOverloads constructor(
             val control = playlistBottomActionAt(nativeX)
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    if (control == null) false else { pressedControl = control.ordinal + 1; true }
+                    if (control == null) false else {
+                        pressedControl = control.ordinal + 1
+                        pressedControlBitmap = makePressedBitmap(control)
+                        invalidate()
+                        true
+                    }
                 }
                 MotionEvent.ACTION_UP -> {
                     val pressed = pressedControl
                     pressedControl = 0
+                    pressedControlBitmap?.recycle()
+                    pressedControlBitmap = null
+                    invalidate()
                     if (pressed == 0) return@setOnTouchListener false
                     if (pressed == (control?.ordinal ?: -1) + 1) {
                         when (control) {
@@ -102,11 +112,33 @@ class WinampPlaylistBottomView @JvmOverloads constructor(
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     pressedControl = 0
+                    pressedControlBitmap?.recycle()
+                    pressedControlBitmap = null
+                    invalidate()
                     true
                 }
                 else -> pressedControl != 0
             }
         }
+    }
+
+    /** Makes and swaps in a blue pressed-state image for the touched PLEDIT control. */
+    private fun makePressedBitmap(action: PlaylistBottomAction): Bitmap? {
+        val source = ThemeManager.getPlaylistBottomBarBitmap() ?: return null
+        val result = source.copy(Bitmap.Config.ARGB_8888, true) ?: return null
+        val (left, right) = when (action) {
+            PlaylistBottomAction.ADD -> 6f to 38f
+            PlaylistBottomAction.REMOVE -> 39f to 68f
+            PlaylistBottomAction.SELECT -> 69f to 97f
+            PlaylistBottomAction.LIST_OPTIONS -> 98f to 126f
+        }
+        val canvas = Canvas(result)
+        val save = canvas.save()
+        canvas.clipRect(left, 0f, right, NATIVE_HEIGHT.toFloat())
+        val pressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x553A78D0 }
+        canvas.drawRoundRect(RectF(left + 1f, 2f, right - 1f, 36f), 10f, 10f, pressedPaint)
+        canvas.restoreToCount(save)
+        return result
     }
 
     override fun performClick(): Boolean {
@@ -145,7 +177,7 @@ class WinampPlaylistBottomView @JvmOverloads constructor(
         val theme = ThemeManager.getAudioPlayerTheme(context)
         timeTextPaint.color = theme.textPrimary
 
-        val bottomBmp = ThemeManager.getPlaylistBottomBarBitmap()
+        val bottomBmp = pressedControlBitmap ?: ThemeManager.getPlaylistBottomBarBitmap()
         if (bottomBmp != null) {
             val k = w / NATIVE_WIDTH
             if (k >= 2) {
