@@ -40,11 +40,11 @@ internal object VisualFrameGeometry {
                 patch("gen", Box(127, 43, 134, 69), Box(0, title, side, y))
                 patch("gen", Box(141, 43, 148, 69), Box(width - side, title, width, y))
                 // GEN's lower-right corner also supplies the mirrored lower-left corner.
-                patch("gen", Box(118, 55, 125, 69), Box(0, y, side, height), mirror = true)
+                patch("gen", Box(118, 58, 125, 69), Box(0, y, side, height), mirror = true)
                 // The first seven columns are the left corner/gutter. Corners
                 // are rendered separately, so stretching them creates a gap.
-                patch("gen", Box(7, 55, 118, 69), Box(side, y, width - side, height))
-                patch("gen", Box(118, 55, 125, 69), Box(width - side, y, width, height))
+                patch("gen", Box(7, 58, 118, 69), Box(side, y, width - side, height))
+                patch("gen", Box(118, 58, 125, 69), Box(width - side, y, width, height))
             }
         }
     }
