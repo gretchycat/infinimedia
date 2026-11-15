@@ -105,9 +105,13 @@ public class ThemeRuntimeCheck {
             int side=width*7/275,title=width*20/275,bottom=width*14/275;
             int height=title+(width-2*side)*9/16+bottom;
             Bitmap frame=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
+            frame.eraseColor(Color.BLACK);
+            int contentProbeY=title+50;
+            frame.setPixel(width/2,contentProbeY,Color.MAGENTA);
             Paint paint=new Paint();paint.setFilterBitmap(false);
             WinampVisualFrameLayout.drawFrame(new Canvas(frame),width,height,false,video,gen,paint,Color.DKGRAY,Color.GRAY);
-            check(frame.getPixel(width/2,title+10)==Color.BLACK,"Content remains unobscured");
+            check(frame.getPixel(width/2,contentProbeY)==Color.MAGENTA,"Frame overlay preserves visual content width="+width+" actual="+Integer.toHexString(frame.getPixel(width/2,contentProbeY)));
+            frame.setPixel(width/2,contentProbeY,Color.BLACK);
             check(frame.getPixel(0,title+1)==gen.getPixel(127,43),"GEN left edge source");
             check(frame.getPixel(width-1,title+1)==gen.getPixel(147,43),"GEN right edge source width="+width+" actual="+Integer.toHexString(frame.getPixel(width-1,title+1))+" source="+Integer.toHexString(gen.getPixel(147,43)));
             check(frame.getPixel(width/2,height-bottom)!=Color.BLACK,"GEN bottom rail starts without a blank gutter");

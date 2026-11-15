@@ -34,6 +34,9 @@ internal class WinampVisualFrameLayout(context: Context) : LinearLayout(context)
     init {
         orientation = VERTICAL
         setWillNotDraw(false)
+        // Keep empty areas black behind the hosted artwork/video. The frame
+        // itself is drawn after child views so its edges remain visible.
+        body.setBackgroundColor(Color.BLACK)
         addView(title, LayoutParams(-1, 1))
         addView(body, LayoutParams(-1, -2))
         title.setOnClickListener {
@@ -76,7 +79,6 @@ internal class WinampVisualFrameLayout(context: Context) : LinearLayout(context)
         @JvmStatic fun drawFrame(canvas: Canvas, width: Int, height: Int, shaded: Boolean,
             video: Bitmap?, gen: Bitmap?, paint: Paint, fallbackTitle: Int, fallbackBorder: Int) {
             if (width <= 0 || height <= 0) return
-            canvas.drawColor(Color.BLACK)
             val inset = VisualFrameGeometry.insets(width)
             paint.style = Paint.Style.FILL
             paint.color = fallbackTitle
