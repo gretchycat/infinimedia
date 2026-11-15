@@ -4,6 +4,10 @@ internal enum class PlaylistInsertion { AFTER_CURRENT, END }
 
 internal enum class PlaylistSortOrder { FILE_NAME, TITLE, ARTIST, ALBUM }
 
+/** The insertion chooser only matters when after-current and append differ. */
+internal fun shouldAskPlaylistInsertion(trackCount: Int, currentIndex: Int): Boolean =
+    trackCount > 0 && currentIndex in 0 until trackCount && currentIndex < trackCount - 1
+
 /** Return the insertion point for a batch of newly selected tracks. */
 internal fun playlistInsertionIndex(
     trackCount: Int,

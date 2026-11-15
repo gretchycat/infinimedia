@@ -1,6 +1,8 @@
 package com.infinifolder.viewer
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaylistOrderingTest {
@@ -45,6 +47,13 @@ class PlaylistOrderingTest {
         assertEquals(5, playlistInsertionIndex(5, 2, PlaylistInsertion.END))
         assertEquals(0, playlistInsertionIndex(0, -1, PlaylistInsertion.AFTER_CURRENT))
         assertEquals(5, playlistInsertionIndex(5, -1, PlaylistInsertion.AFTER_CURRENT))
+    }
+
+    @Test fun insertionPromptOnlyAppearsWhenChoicesDiffer() {
+        assertFalse(shouldAskPlaylistInsertion(0, -1))
+        assertFalse(shouldAskPlaylistInsertion(5, -1))
+        assertTrue(shouldAskPlaylistInsertion(5, 2))
+        assertFalse(shouldAskPlaylistInsertion(5, 4))
     }
 
     @Test fun metadataSortAndReverseKeepTheSelectedDuplicateOccurrence() {

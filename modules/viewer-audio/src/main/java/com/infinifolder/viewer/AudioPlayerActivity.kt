@@ -843,6 +843,15 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     }
 
     private fun showAddTracksDialog() {
+        val service = AudioPlayerService.currentService
+        val (trackCount, currentIndex) = if (service == null) 0 to -1 else synchronized(service.playlist) {
+            service.playlist.size to service.currentIndex
+        }
+        if (!shouldAskPlaylistInsertion(trackCount, currentIndex)) {
+            pendingPlaylistInsertion = PlaylistInsertion.END
+            showMediaCategoryDialog()
+            return
+        }
         ThemeManager.createDialogBuilder(this)
             .setTitle("Add tracks")
             .setItems(arrayOf("After the current song", "At the end of the playlist")) { _, which ->
