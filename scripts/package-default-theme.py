@@ -3,7 +3,7 @@
 from pathlib import Path
 import argparse,json,zipfile
 
-IMAGE_ROLES=set('main gen cbuttons titlebar posbar volume shufrep text numbers monoster playpaus pledit balance eqmain eq_ex nums_ex video genex albumlist amarok mikro mb'.split())
+IMAGE_ROLES=set('main gen cbuttons titlebar posbar volume shufrep text numbers monoster playpaus pledit playlist-titlebar balance eqmain eq_ex nums_ex video genex albumlist amarok mikro mb'.split())
 METADATA={'theme.json','skininfo.xml','readme.txt','region.txt','pledit.txt','albumlist.txt','viscolor.txt','screenshot.png'}
 
 def package(source,output):
