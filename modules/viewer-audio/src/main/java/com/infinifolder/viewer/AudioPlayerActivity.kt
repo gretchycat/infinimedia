@@ -205,7 +205,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private lateinit var dockedLeftBorder: WinampPlaylistBorderView
     private lateinit var dockedRightBorder: WinampPlaylistBorderView
     private lateinit var dockedPlaylistScroll: ScrollView
-    private lateinit var dockedPlaylistScrollHandle: PlaylistScrollHandleView
     private lateinit var dockedPlaylistLoadingOverlay: FrameLayout
     private lateinit var dockedPlaylistLoadingMessage: TextView
     private lateinit var dockedBottomBarView: WinampPlaylistBottomView
@@ -1993,11 +1992,10 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         // The ScrollView belongs strictly to JUST the playlist items
         dockedPlaylistScroll = ScrollView(this).apply {
             isFillViewport = true
-            setPadding(0, 0, dp(18), 0)
             layoutParams = FrameLayout.LayoutParams(-1, -1)
             setOnScrollChangeListener { _, _, _, _, _ ->
                 loadVisibleDirectoryImages()
-                if (::dockedPlaylistScrollHandle.isInitialized) dockedPlaylistScrollHandle.invalidate()
+                if (::dockedRightBorder.isInitialized) dockedRightBorder.invalidate()
             }
         }
 
@@ -2010,9 +2008,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
         }
         playlistViewport.addView(dockedPlaylistScroll)
-        dockedPlaylistScrollHandle = PlaylistScrollHandleView(this, dockedPlaylistScroll)
-        playlistViewport.addView(dockedPlaylistScrollHandle,
-            FrameLayout.LayoutParams(dp(18), -1, Gravity.END))
         dockedPlaylistLoadingOverlay = FrameLayout(this).apply {
             visibility = View.GONE
             isClickable = true
@@ -2054,7 +2049,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
         dockedBodyRow.addView(dockedCenterCol)
 
-        dockedRightBorder = WinampPlaylistBorderView(this, isLeft = false).apply {
+        dockedRightBorder = WinampPlaylistBorderView(
+            this, isLeft = false, playlistScrollView = dockedPlaylistScroll).apply {
             layoutParams = LinearLayout.LayoutParams(-2, -1)
         }
         dockedBodyRow.addView(dockedRightBorder)
@@ -2371,7 +2367,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         // This keeps a large recursive selection from serially opening every album
         // image before the playlist is usable.
         dockedPlaylistScroll.post {
-            dockedPlaylistScrollHandle.invalidate()
+            dockedRightBorder.invalidate()
             loadVisibleDirectoryImages()
         }
 

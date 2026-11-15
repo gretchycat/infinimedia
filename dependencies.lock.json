@@ -27,7 +27,7 @@
     },
     "libinfiniui": {
       "url": "https://github.com/gretchycat/libinfiniui.git",
-      "commit": "745a7bba80baa041c2315faafe581b74d5f6b6a6"
+      "commit": "1dd890b30f778352569a0d2503843a3b1fcbcae9"
     },
     "libinfinivideo": {
       "url": "https://github.com/gretchycat/libinfinivideo.git",
