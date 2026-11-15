@@ -14,7 +14,7 @@ import android.view.MotionEvent
 import com.infinifolder.theme.ThemeManager
 import java.util.Locale
 
-internal enum class PlaylistBottomAction { ADD, REMOVE, SELECT, LIST_OPTIONS }
+internal enum class PlaylistBottomAction { ADD, REMOVE, SELECT, LIST_OPTIONS, SAVE }
 
 /** Hit targets follow the four controls in the PLEDIT bottom strip. */
 internal fun playlistBottomActionAt(nativeX: Float): PlaylistBottomAction? = when {
@@ -22,6 +22,7 @@ internal fun playlistBottomActionAt(nativeX: Float): PlaylistBottomAction? = whe
     nativeX in 39f..68f -> PlaylistBottomAction.REMOVE
     nativeX in 69f..97f -> PlaylistBottomAction.SELECT
     nativeX in 98f..126f -> PlaylistBottomAction.LIST_OPTIONS
+    nativeX in 226f..260f -> PlaylistBottomAction.SAVE
     else -> null
 }
 
@@ -47,6 +48,7 @@ class WinampPlaylistBottomView @JvmOverloads constructor(
     var onRemoveFromPlaylist: (() -> Unit)? = null
     var onSelectPlaylistItem: (() -> Unit)? = null
     var onListOptions: (() -> Unit)? = null
+    var onSavePlaylist: (() -> Unit)? = null
     private var pressedControl = 0
     private var pressedControlBitmap: Bitmap? = null
 
@@ -77,8 +79,8 @@ class WinampPlaylistBottomView @JvmOverloads constructor(
     init {
         isClickable = true
         isFocusable = true
-        contentDescription = "Playlist controls: Add media, remove selected tracks, select tracks, or open List Options to save and manage the playlist."
-        tooltipText = "Add, remove, select, or open playlist List Options"
+        contentDescription = "Playlist controls: Add media, remove tracks, select tracks, open List Options, or save the playlist."
+        tooltipText = "Add, remove, select, open List Options, or save playlist"
         setOnTouchListener { _, event ->
             val nativeX = if (width > 0) event.x * NATIVE_WIDTH / width else -1f
             val control = playlistBottomActionAt(nativeX)
@@ -104,6 +106,7 @@ class WinampPlaylistBottomView @JvmOverloads constructor(
                             PlaylistBottomAction.REMOVE -> onRemoveFromPlaylist?.invoke()
                             PlaylistBottomAction.SELECT -> onSelectPlaylistItem?.invoke()
                             PlaylistBottomAction.LIST_OPTIONS -> onListOptions?.invoke()
+                            PlaylistBottomAction.SAVE -> onSavePlaylist?.invoke()
                             null -> Unit
                         }
                     }
@@ -131,6 +134,7 @@ class WinampPlaylistBottomView @JvmOverloads constructor(
             PlaylistBottomAction.REMOVE -> 39f to 68f
             PlaylistBottomAction.SELECT -> 69f to 97f
             PlaylistBottomAction.LIST_OPTIONS -> 98f to 126f
+            PlaylistBottomAction.SAVE -> 226f to 260f
         }
         val canvas = Canvas(result)
         val save = canvas.save()

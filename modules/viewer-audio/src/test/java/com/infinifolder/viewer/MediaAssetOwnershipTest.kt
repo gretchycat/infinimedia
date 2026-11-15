@@ -29,6 +29,13 @@ class MediaAssetOwnershipTest {
         assertTrue(file.isFile)
         val parsed = file.inputStream().use { WinampSkinParser.parseSkinFromStream(it, "Infini") }!!
         assertEquals(listOf("main.ora"), com.infinifolder.theme.SkinArtwork(parsed.artwork).filenames("main"))
+        assertTrue("Default Winamp theme includes its equalizer faceplate", parsed.artwork.containsKey("eqmain.bmp"))
+        assertTrue("Default theme includes its playlist title as skin artwork", parsed.artwork.containsKey("playlist-titlebar.bmp"))
+        val playlistTitle = parsed.artwork.getValue("playlist-titlebar.bmp")
+        assertEquals(275, littleEndianInt(playlistTitle, 18))
+        assertEquals(20, littleEndianInt(playlistTitle, 22))
+        assertTrue("Default theme includes shared titlebar artwork", parsed.artwork.containsKey("titlebar.bmp"))
+        assertTrue("Default theme includes GEN title sprites and bitmap alphabet", parsed.artwork.containsKey("gen.bmp"))
         assertEquals("Infinimedia Default", parsed.name)
         val ora = parsed.artwork.getValue("main.ora")
         assertEquals("PK", String(ora, 0, 2, Charsets.US_ASCII))
@@ -48,6 +55,12 @@ class MediaAssetOwnershipTest {
             for (author in listOf("Sven Kistner", "Zarko Jovic", "GuidoD", "Wildrose-Wally")) assertTrue(attribution.contains(author))
         }
     }
+
+    private fun littleEndianInt(bytes: ByteArray, offset: Int): Int =
+        (bytes[offset].toInt() and 0xff) or
+            ((bytes[offset + 1].toInt() and 0xff) shl 8) or
+            ((bytes[offset + 2].toInt() and 0xff) shl 16) or
+            ((bytes[offset + 3].toInt() and 0xff) shl 24)
 
     @Test fun optionalSoundFontRetainsItsOriginalBytes() {
         val root = File(requireNotNull(System.getProperty("infini.media.soundfonts")))

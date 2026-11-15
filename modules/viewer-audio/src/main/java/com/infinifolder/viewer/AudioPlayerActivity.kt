@@ -187,6 +187,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private lateinit var skinDockedStack: LinearLayout
     private lateinit var dockedVisualWindow: WinampVisualFrameLayout
     private lateinit var dockedVisualBody: FrameLayout
+    private lateinit var dockedEqualizerView: WinampEqualizerView
     private lateinit var detailsWindow: LinearLayout
     private lateinit var detailsTitle: WinampPlaylistTitleView
     private lateinit var detailsBody: LinearLayout
@@ -241,6 +242,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private lateinit var standardSeekThumb: android.graphics.drawable.Drawable
     private var visualizerBridge: RealAudioVisualizerBridge? = null
     private var winampVisualPaneOpen = true
+    private var winampEqualizerWindowOpen = false
     private var visualVideoPlayback: VideoSurfacePlayback? = null
     private var visualVideoInput: VideoPlaybackInput? = null
     private var visualVideoPlaying = false
@@ -357,6 +359,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             if (::dockedLeftBorder.isInitialized) dockedLeftBorder.invalidate()
             if (::dockedRightBorder.isInitialized) dockedRightBorder.invalidate()
             if (::dockedVisualWindow.isInitialized) dockedVisualWindow.invalidate()
+            if (::dockedEqualizerView.isInitialized) dockedEqualizerView.invalidate()
         }
         applyTheme(ThemeManager.getAudioPlayerTheme(this))
         if (visualVideoWasPlayingBeforePause && AudioPlayerService.currentService?.currentTrack?.mediaKind == PlaylistMediaKind.VIDEO) {
@@ -771,25 +774,61 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             Toast.makeText(this, "The playlist is empty", Toast.LENGTH_SHORT).show()
             return
         }
+        val formats = AudioPlaylistExportFormat.entries
+        val formatPicker = Spinner(this).apply {
+            adapter = android.widget.ArrayAdapter(
+                this@AudioPlayerActivity,
+                android.R.layout.simple_spinner_item,
+                formats.map { it.label },
+            ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+            setSelection(formats.indexOf(AudioPlaylistExportFormat.JSPF))
+        }
         val nameInput = android.widget.EditText(this).apply {
             setSingleLine(true)
             setText("InfiniMedia Playlist.jspf")
             setSelection(text.length)
             hint = "Playlist filename"
         }
+        formatPicker.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val format = formats.getOrNull(position) ?: return
+                val updated = format.filename(nameInput.text.toString())
+                if (updated != nameInput.text.toString()) {
+                    nameInput.setText(updated)
+                    nameInput.setSelection(updated.length)
+                }
+            }
+        }
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(4), dp(20), 0)
+            addView(TextView(this@AudioPlayerActivity).apply {
+                text = "Playlist format"
+                textSize = 13f
+            })
+            addView(formatPicker)
+            addView(TextView(this@AudioPlayerActivity).apply {
+                text = "Filename"
+                textSize = 13f
+                setPadding(0, dp(8), 0, 0)
+            })
+            addView(nameInput)
+        }
         ThemeManager.createDialogBuilder(this)
             .setTitle("Save playlist")
-            .setMessage("Choose a filename and destination folder.")
-            .setView(nameInput)
+            .setMessage("JSPF is the default and preserves InfiniMedia playlist metadata.")
+            .setView(form)
             .setPositiveButton("Choose location") { _, _ ->
-                val enteredName = nameInput.text.toString().trim().ifBlank { "InfiniMedia Playlist.jspf" }
-                val name = if (enteredName.endsWith(".jspf", ignoreCase = true)) enteredName else "$enteredName.jspf"
-                val bytes = runCatching { AudioPlaylistJspf.encode(snapshot, "InfiniMedia Playlist") }.getOrElse {
+                val format = formats.getOrNull(formatPicker.selectedItemPosition)
+                    ?: AudioPlaylistExportFormat.JSPF
+                val name = format.filename(nameInput.text.toString())
+                val bytes = runCatching { format.encode(snapshot, name.substringBeforeLast('.')) }.getOrElse {
                     Toast.makeText(this, "Could not create playlist: ${it.message ?: "encoding failed"}", Toast.LENGTH_LONG).show()
                     return@setPositiveButton
                 }
                 val source = runCatching {
-                    InfiniSelect.createDocument(this, name, AudioPlaylistJspf.MIME_TYPE, bytes)
+                    InfiniSelect.createDocument(this, name, format.mimeType, bytes)
                 }.getOrElse {
                     Toast.makeText(this, "Could not prepare playlist for saving: ${it.message ?: "failed"}", Toast.LENGTH_LONG).show()
                     return@setPositiveButton
@@ -798,7 +837,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                     clientId = "infinimedia",
                     displayName = "InfiniMedia",
                     fileName = name,
-                    mimeType = AudioPlaylistJspf.MIME_TYPE,
+                    mimeType = format.mimeType,
                     sourceUri = source,
                     sourceSizeBytes = bytes.size.toLong(),
                 ) }.getOrElse {
@@ -1528,6 +1567,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
         mainColumn.addView(artCard)
         setupDockedVisualWindow()
+        setupDockedEqualizerWindow()
 
         // Progress Bar & Timers
         progressContainer = LinearLayout(this).apply {
@@ -2073,6 +2113,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             onRemoveFromPlaylist = { showPlaylistRemoveActions() }
             onSelectPlaylistItem = { showPlaylistSelectionActions() }
             onListOptions = { showPlaylistOptionsDialog() }
+            onSavePlaylist = { savePlaylistExternally() }
         }
         dockedSubWindow.addView(dockedBottomBarView)
     }
@@ -2083,6 +2124,25 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             layoutParams = LinearLayout.LayoutParams(-1, -2)
         }
         dockedVisualBody = dockedVisualWindow.body
+    }
+
+    private fun setupDockedEqualizerWindow() {
+        dockedEqualizerView = WinampEqualizerView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(-1, -2)
+            visibility = View.GONE
+            render(emptyEqualizerSnapshot())
+            onEnabledChanged = { enabled ->
+                AudioPlayerService.currentService?.let { service ->
+                    service.setEqualizerEnabled(enabled)
+                    service.equalizerSnapshot()?.let(::render)
+                }
+            }
+            onBandChanged = { index, level ->
+                AudioPlayerService.currentService?.setEqualizerBandLevel(index, level)
+            }
+            onPresetsRequested = { showEqualizerPresetMenu() }
+            onCloseRequested = { setWinampEqualizerWindowOpen(false) }
+        }
     }
 
     private fun attachArtCardToVisualWindow(attached: Boolean) {
@@ -2134,6 +2194,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             onRemoveFromPlaylist = { showPlaylistRemoveActions() }
             onSelectPlaylistItem = { showPlaylistSelectionActions() }
             onListOptions = { showPlaylistOptionsDialog() }
+            onSavePlaylist = { savePlaylistExternally() }
         }
         detailsWindow.addView(detailsBottom, LinearLayout.LayoutParams(-1, -2))
     }
@@ -2155,12 +2216,15 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         skinDockedStack.removeAllViews()
         (dockedSubWindow.parent as? android.view.ViewGroup)?.removeView(dockedSubWindow)
         (dockedVisualWindow.parent as? android.view.ViewGroup)?.removeView(dockedVisualWindow)
+        (dockedEqualizerView.parent as? android.view.ViewGroup)?.removeView(dockedEqualizerView)
+        dockedEqualizerView.visibility = if (winampEqualizerWindowOpen) View.VISIBLE else View.GONE
         dockedTrackArtist.maxLines = if (columns > 1) 2 else 1
         if (columns > 1) {
             skinContainer.orientation = LinearLayout.HORIZONTAL
             skinLeftColumn.addView(winampMainWindowView, LinearLayout.LayoutParams(-1, -2))
             if (landscape) {
                 skinLeftColumn.addView(dockedVisualWindow, LinearLayout.LayoutParams(-1, -2))
+                skinLeftColumn.addView(dockedEqualizerView, LinearLayout.LayoutParams(-1, -2))
                 dockedCenterCol.addView(dockedMetaRow, 0)
                 dockedCenterCol.addView(dockedToolScroll, 1)
                 skinRightColumn.addView(dockedSubWindow, FrameLayout.LayoutParams(-1, -1))
@@ -2169,6 +2233,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             } else {
                 detailsContent.addView(dockedMetaRow)
                 detailsContent.addView(dockedToolScroll)
+                skinLeftColumn.addView(dockedEqualizerView, LinearLayout.LayoutParams(-1, -2))
                 skinLeftColumn.addView(detailsWindow, LinearLayout.LayoutParams(-1, 0, 1f))
                 skinContainer.addView(skinLeftColumn, LinearLayout.LayoutParams(0, -1, 1f))
                 skinRightColumn.addView(dockedSubWindow, FrameLayout.LayoutParams(-1, -1))
@@ -2179,6 +2244,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             dockedCenterCol.addView(dockedToolScroll, 0)
             skinContainer.addView(winampMainWindowView, LinearLayout.LayoutParams(-1, -2))
             skinDockedStack.addView(dockedVisualWindow, LinearLayout.LayoutParams(-1, -2))
+            skinDockedStack.addView(dockedEqualizerView, LinearLayout.LayoutParams(-1, -2))
             skinDockedStack.addView(dockedSubWindow, LinearLayout.LayoutParams(-1, 0, 1f))
             skinContainer.addView(skinDockedStack, LinearLayout.LayoutParams(-1, 0, 1f))
         }
@@ -2861,6 +2927,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val isWinamp = (theme.id == AppThemeId.WINAMP_CLASSIC || theme.id == AppThemeId.CUSTOM_WSZ)
         val isWmp = theme.id == AppThemeId.WMP_GLASS
         visualPaneBtn.visibility = if (isWinamp) View.VISIBLE else View.GONE
+        dockedEqualizerView.visibility = if (isWinamp && winampEqualizerWindowOpen) View.VISIBLE else View.GONE
+        dockedEqualizerView.invalidate()
         wmpPlayerLayout.setActive(isWmp)
         if (isWinamp) attachArtCardToVisualWindow(true)
         else if (!isWmp) attachArtCardToVisualWindow(false)
@@ -3373,6 +3441,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private fun updateUIFromService(service: AudioPlayerService) {
         val track = service.currentTrack
+        service.equalizerSnapshot()?.let(dockedEqualizerView::render)
         updateTrackView(track)
         val isPlaying = if (CastManager.isCasting) CastManager.isRemotePlaying else service.isPlaying
         val overlayingAudio = service.activeAnsiOverlay?.followingAudio?.let {
@@ -3691,19 +3760,14 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private fun showEqualizerDialog() {
         val service = AudioPlayerService.currentService
-        val initial = service?.equalizerSnapshot()
-        if (service == null || initial == null) {
-            val message = when {
-                CastManager.isCasting -> "The Android equalizer can only process playback on this phone. Casting sends audio to the receiver, so use the receiver's audio controls."
-                else -> "Start local audio playback to attach the device equalizer. Some Android devices do not provide an equalizer effect."
-            }
-            ThemeManager.createDialogBuilder(this)
-                .setTitle("Equalizer unavailable")
-                .setMessage(message)
-                .setPositiveButton("OK", null)
-                .show()
+        val themeId = ThemeManager.getAudioPlayerTheme(this).id
+        if (themeId in setOf(AppThemeId.WINAMP_CLASSIC, AppThemeId.CUSTOM_WSZ)) {
+            service?.equalizerSnapshot()?.let(dockedEqualizerView::render)
+                ?: dockedEqualizerView.render(emptyEqualizerSnapshot())
+            setWinampEqualizerWindowOpen(!winampEqualizerWindowOpen)
             return
         }
+        val initial = service?.equalizerSnapshot() ?: emptyEqualizerSnapshot()
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -3744,20 +3808,22 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         fun renderBands(snapshot: AudioEqualizerSnapshot) {
             bands.removeAllViews()
             snapshot.bands.forEachIndexed { index, band ->
+                val level = if (band.supported) band.levelMillibels else 0
                 val bandLabel = TextView(this).apply {
-                    text = "${frequencyLabel(band.centerFrequencyHz)}  ${band.levelMillibels / 100f} dB"
+                    text = "${frequencyLabel(band.centerFrequencyHz)}  ${level / 100f} dB"
                     textSize = 12f
                 }
                 bands.addView(bandLabel, LinearLayout.LayoutParams(-1, -2))
                 val seek = SeekBar(this).apply {
                     max = (snapshot.maxLevelMillibels - snapshot.minLevelMillibels).toInt().coerceAtLeast(1)
-                    progress = (band.levelMillibels - snapshot.minLevelMillibels).toInt().coerceIn(0, max)
+                    progress = (level - snapshot.minLevelMillibels).toInt().coerceIn(0, max)
+                    isEnabled = band.supported
                     setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                         override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                             val level = (snapshot.minLevelMillibels.toInt() + progress).toShort()
                             bandLabel.text = "${frequencyLabel(band.centerFrequencyHz)}  ${level / 100f} dB"
                             if (fromUser) {
-                                service.setEqualizerBandLevel(index, level)
+                                service?.setEqualizerBandLevel(index, level)
                                 if (presetPicker.selectedItemPosition != 0) presetPicker.setSelection(0)
                             }
                         }
@@ -3771,14 +3837,14 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             }
         }
         renderBands(initial)
-        enable.setOnCheckedChangeListener { _, checked -> service.setEqualizerEnabled(checked) }
+        enable.setOnCheckedChangeListener { _, checked -> service?.setEqualizerEnabled(checked) }
         presetPicker.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
-                if (position == 0 || !service.useEqualizerPreset(position - 1)) return
+                if (position == 0 || service?.useEqualizerPreset(position - 1) != true) return
                 service.setEqualizerEnabled(true)
                 enable.isChecked = true
-                service.equalizerSnapshot()?.let(::renderBands)
+                service?.equalizerSnapshot()?.let(::renderBands)
             }
         }
 
@@ -3790,12 +3856,51 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             .create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                service.resetEqualizer()
+                service?.resetEqualizer()
                 presetPicker.setSelection(0)
-                service.equalizerSnapshot()?.let(::renderBands)
+                service?.equalizerSnapshot()?.let(::renderBands)
             }
         }
         dialog.show()
+    }
+
+    private fun setWinampEqualizerWindowOpen(open: Boolean) {
+        winampEqualizerWindowOpen = open
+        if (::dockedEqualizerView.isInitialized) {
+            dockedEqualizerView.visibility = if (open) View.VISIBLE else View.GONE
+            dockedEqualizerView.requestLayout()
+        }
+    }
+
+    private fun showEqualizerPresetMenu() {
+        val service = AudioPlayerService.currentService ?: return
+        val presets = service.equalizerSnapshot()?.presets.orEmpty()
+        if (presets.isEmpty()) return
+        ThemeManager.createDialogBuilder(this)
+            .setTitle("Equalizer presets")
+            .setItems(presets.toTypedArray()) { _, index ->
+                if (service.useEqualizerPreset(index)) {
+                    service.setEqualizerEnabled(true)
+                    service.equalizerSnapshot()?.let(dockedEqualizerView::render)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun emptyEqualizerSnapshot(): AudioEqualizerSnapshot = AudioEqualizerSnapshot(
+        enabled = false,
+        minLevelMillibels = (-1500).toShort(),
+        maxLevelMillibels = 1500,
+        bands = listOf(60, 170, 310, 600, 1_000, 3_000, 6_000, 12_000, 14_000, 16_000)
+            .map { AudioEqualizerBand(centerFrequencyHz = it, levelMillibels = 0, supported = false) },
+        presets = emptyList(),
+        activePreset = "Custom",
+    )
+
+    private fun refreshDockedEqualizer() {
+        if (!::dockedEqualizerView.isInitialized) return
+        AudioPlayerService.currentService?.equalizerSnapshot()?.let(dockedEqualizerView::render)
     }
 
     /** Emoji ignore text color, so active state is shown with an accent pill background + full opacity. */
@@ -4053,7 +4158,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             return
         }
         val items = arrayOf(
-            "Save playlist as JSPF…",
             "Sort by file name",
             "Sort by title",
             "Sort by artist",
@@ -4061,36 +4165,24 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             "Reverse playlist order",
             "Shuffle: ${if (service.isShuffleEnabled) "On" else "Off"}",
             "Repeat: ${service.repeatMode.name.lowercase().replaceFirstChar { it.uppercase() }}",
-            "Clear playlist",
-            "Select currently playing track",
         )
         ThemeManager.createDialogBuilder(this)
             .setTitle("Playlist List Options")
             .setItems(items) { _, which ->
                 when (which) {
-                    0 -> savePlaylistExternally()
-                    1 -> sortPlaylistAndRemapSelection(service, PlaylistSortOrder.FILE_NAME)
-                    2 -> sortPlaylistAndRemapSelection(service, PlaylistSortOrder.TITLE)
-                    3 -> sortPlaylistAndRemapSelection(service, PlaylistSortOrder.ARTIST)
-                    4 -> sortPlaylistAndRemapSelection(service, PlaylistSortOrder.ALBUM)
-                    5 -> reversePlaylistAndRemapSelection(service)
-                    6 -> {
+                    0 -> sortPlaylistAndRemapSelection(service, PlaylistSortOrder.FILE_NAME)
+                    1 -> sortPlaylistAndRemapSelection(service, PlaylistSortOrder.TITLE)
+                    2 -> sortPlaylistAndRemapSelection(service, PlaylistSortOrder.ARTIST)
+                    3 -> sortPlaylistAndRemapSelection(service, PlaylistSortOrder.ALBUM)
+                    4 -> reversePlaylistAndRemapSelection(service)
+                    5 -> {
                         service.toggleShuffle()
                         updateDockedPlaylist(forceRebuild = true)
                         Toast.makeText(this, "Shuffle ${if (service.isShuffleEnabled) "on" else "off"}", Toast.LENGTH_SHORT).show()
                     }
-                    7 -> {
+                    6 -> {
                         service.cycleRepeatMode()
                         Toast.makeText(this, "Repeat ${service.repeatMode.name.lowercase()}", Toast.LENGTH_SHORT).show()
-                    }
-                    8 -> confirmClearPlaylist(service)
-                    9 -> {
-                        selectedPlaylistIndex = service.currentIndex
-                        hasExplicitPlaylistSelection = true
-                        selectedPlaylistIndices.clear()
-                        if (selectedPlaylistIndex in service.playlist.indices) selectedPlaylistIndices.add(selectedPlaylistIndex)
-                        updateDockedPlaylist()
-                        scrollToSelectedPlaylistItem()
                     }
                 }
             }
@@ -4338,11 +4430,13 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     override fun onAudioSessionIdChanged(audioSessionId: Int) {
         runOnUiThread {
             updateVisualizerCapture(audioSessionId)
+            refreshDockedEqualizer()
         }
     }
 
     override fun onTrackChanged(track: AudioTrack?, index: Int, total: Int) {
         runOnUiThread {
+            refreshDockedEqualizer()
             if (isLandscapeVideoFullscreen && track?.mediaKind != PlaylistMediaKind.VIDEO) {
                 exitLandscapeVideoFullscreen()
             }
@@ -4383,6 +4477,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     override fun onPlaybackStateChanged(isPlaying: Boolean, isLoading: Boolean) {
         runOnUiThread {
+            refreshDockedEqualizer()
             val effectivePlaying = if (CastManager.isCasting) CastManager.isRemotePlaying else isPlaying || visualVideoPlaying
             val service = AudioPlayerService.currentService
             val overlayingAudio = service?.activeAnsiOverlay?.followingAudio?.let {

@@ -69,7 +69,7 @@ class WinampPlaylistTitleView @JvmOverloads constructor(
         val h = height
         if (w <= 0 || h <= 0) return
 
-        val titleBmp = ThemeManager.getPlaylistTitlebarBitmap()
+        val titleBmp = ThemeManager.skinBitmap("playlist-titlebar.bmp")
         if (titleBmp != null) {
             val k = w / NATIVE_WIDTH
             if (k >= 2) {
