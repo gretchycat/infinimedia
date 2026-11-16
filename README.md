@@ -77,6 +77,14 @@ unreadable or attempt to open an SFTP address through Android's local adapter.
 Install the current InfiniFolder build alongside client updates when testing
 remote playlists; the optional storage provider runs in that application.
 
+## Remote metadata enrichment
+
+Remote tag and artwork reads now use a 30-second cooperative budget for positional
+sources and 10 seconds for other inputs, with 16 MiB and 512-read limits per probe.
+A failed playlist metadata probe is retried once after the first pass over queued
+audio. A blocked provider call may outlast the elapsed-time budget; SFTP over cellular
+still needs a post-change device check.
+
 The 0.1.1 Android build passed `./build.sh --console=plain` on Termux with all
 91 unit tests passing, including a saved-SFTP-playlist regression. The packaged
 manifest reports version code 2. This does not establish device playback or
@@ -86,6 +94,10 @@ Version 0.1.2 starts the next audio item over silent ANSI output while the
 terminal finishes scrolling, and crossfades visual image changes for one second.
 Its Android build passed with 95 unit tests; the APK reports version code 3.
 Device playback and visual transition behavior still need on-device acceptance.
+
+## Queueing media
+
+The queue add flow selects audio, video and images together; InfiniMedia requests all three supported media categories without a category-checkbox prompt. From InfiniFolder, **Queue all media in InfiniMedia** recursively gathers supported audio, video and image items from a directory or supported container. A readable `cover.*` image is queued first for each source directory so it appears as that directory’s first playlist item. Runtime format capabilities and MIME/extension filters determine which items are offered.
 
 ## ANSI art and ANSI Music
 
@@ -138,8 +150,9 @@ casting, codecs installed on a device, or storage provider lifecycle behavior.
 See the architecture audit in Infinifolder for executed verification results.
 
 Extracted from gretchycat/infinifolder's viewer-audio, viewer-video and viewer-host
-sources; the originating repository retains their history. Preserve bundled
-third-party notices and skin/font attribution. See LICENSE.md.
+sources; the originating repository retains their history. Original InfiniMedia code
+is licensed under MIT; preserve bundled third-party notices and skin/font attribution.
+See LICENSE.md.
 
 ## Build environment discovery
 
