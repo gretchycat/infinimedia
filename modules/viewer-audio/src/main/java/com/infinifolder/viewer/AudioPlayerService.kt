@@ -1781,17 +1781,36 @@ class AudioPlayerService : Service() {
                 inJustDecodeBounds = true
             }
             BitmapFactory.decodeByteArray(data, 0, data.size, options)
+            if (options.outWidth <= 0 || options.outHeight <= 0) return null
             var inSampleSize = 1
-            while (options.outHeight / inSampleSize > reqHeight || options.outWidth / inSampleSize > reqWidth) {
+            while (options.outHeight / inSampleSize > reqHeight * 2 || options.outWidth / inSampleSize > reqWidth * 2) {
                 inSampleSize *= 2
             }
             val decodeOpts = BitmapFactory.Options().apply {
                 this.inSampleSize = inSampleSize
             }
-            BitmapFactory.decodeByteArray(data, 0, data.size, decodeOpts)
+            BitmapFactory.decodeByteArray(data, 0, data.size, decodeOpts)?.let {
+                filterBitmapToBounds(it, reqWidth, reqHeight)
+            }
         } catch (_: Exception) {
             null
         }
+    }
+
+    /** Smoothly reduce an oversampled bitmap and release its larger backing allocation. */
+    private fun filterBitmapToBounds(bitmap: Bitmap, maxWidth: Int, maxHeight: Int): Bitmap {
+        val scale = minOf(1f, maxWidth.toFloat() / bitmap.width, maxHeight.toFloat() / bitmap.height)
+        if (scale >= 1f) return bitmap
+        val filtered = runCatching {
+            Bitmap.createScaledBitmap(
+                bitmap,
+                (bitmap.width * scale).toInt().coerceAtLeast(1),
+                (bitmap.height * scale).toInt().coerceAtLeast(1),
+                true,
+            )
+        }.getOrNull() ?: return bitmap
+        if (filtered !== bitmap && !bitmap.isRecycled) bitmap.recycle()
+        return filtered
     }
 
     private fun readTrackTags(input: AudioPlaybackInput, includeArtwork: Boolean): AudioTags {
@@ -1922,12 +1941,17 @@ class AudioPlayerService : Service() {
             MediaSourceAdapter.openStream(this, accessUri).use { BitmapFactory.decodeStream(it, null, options) }
             if (options.outWidth <= 0 || options.outHeight <= 0) return null
             var sample = 1
-            // Playlist rows and the player surface do not need full resolution. Keep
-            // one shared, sampled bitmap per directory instead of retaining originals.
-            while (options.outWidth / sample > 256 || options.outHeight / sample > 256) sample *= 2
+            // Decode at up to 2x the display target, then filter down. This preserves
+            // narrow artwork details instead of dropping them during an aggressive
+            // decoder subsample.
+            while (options.outWidth / sample > 1024 || options.outHeight / sample > 1024) sample *= 2
             val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sample }
-            MediaSourceAdapter.openStream(this, accessUri).use { BitmapFactory.decodeStream(it, null, decodeOptions) }
-                ?.also { directoryArtworkBitmapCache.put(identity, it) }
+            val decoded = MediaSourceAdapter.openStream(this, accessUri).use {
+                BitmapFactory.decodeStream(it, null, decodeOptions)
+            } ?: return null
+            val filtered = filterBitmapToBounds(decoded, 512, 512)
+            directoryArtworkBitmapCache.put(identity, filtered)
+            filtered
         } catch (error: Exception) {
             android.util.Log.w("AudioPlayerService", "Could not decode directory cover $coverUri", error)
             null

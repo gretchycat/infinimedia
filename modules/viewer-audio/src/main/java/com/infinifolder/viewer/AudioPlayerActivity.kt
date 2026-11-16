@@ -52,6 +52,7 @@ import io.github.gretchycat.infinistream.Operations
 import io.github.gretchycat.infinistream.RuntimeCapabilities
 import io.github.gretchycat.infinistream.StreamMetadata
 import io.github.gretchycat.infinivideo.VideoCapabilities
+import io.github.gretchycat.infinivideo.VideoControls
 import io.github.gretchycat.infinivideo.VideoPlayback
 import io.github.gretchycat.infinivideo.VideoSurfacePlayback
 import io.github.gretchycat.infiniselect.InfiniSelect
@@ -155,11 +156,14 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private lateinit var artCard: FrameLayout
     private lateinit var albumArtView: ImageView
+    private lateinit var fullscreenVideoButton: TextView
+    private var fullscreenVideoControls: LinearLayout? = null
+    private var fullscreenPlayPauseControl: TextView? = null
     private lateinit var ansiTerminalView: AnsiTerminalView
     private lateinit var visualPaneMetadata: LinearLayout
     private lateinit var visualPaneTitleText: TextView
     private lateinit var visualPaneDetailsText: TextView
-    private lateinit var visualPaneVisualizerView: VisualizerView
+    private lateinit var liveVisualizationView: LiveVisualizationView
     private lateinit var visualizerView: VisualizerView
     private lateinit var trackTitleText: TextView
     private lateinit var trackArtistText: TextView
@@ -248,6 +252,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private var visualVideoPlaying = false
     private var visualVideoWasPlayingBeforePause = false
     private var activeVisualTrackKey: String? = null
+    private var lastVisualizationArtwork: Bitmap? = null
     private val visualLoadGeneration = java.util.concurrent.atomic.AtomicLong()
     private val visualImageAdvanceHandler = Handler(Looper.getMainLooper())
     private val visualImageAdvanceRunnable = object : Runnable {
@@ -349,6 +354,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     override fun onResume() {
         super.onResume()
+        if (::liveVisualizationView.isInitialized) liveVisualizationView.onHostResume()
         updateSystemBarsForOrientation()
         isPlayerResumed = true
         skinAnimationHost?.close()
@@ -392,8 +398,11 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         AudioPlayerService.currentService?.prioritizeMetadataTracks(emptyList())
         stopProgressFrames()
         visualizerBridge?.detach()
+        if (::liveVisualizationView.isInitialized) {
+            liveVisualizationView.setPlaybackActive(false)
+            liveVisualizationView.onHostPause()
+        }
         if (::visualizerView.isInitialized) visualizerView.updateData(FloatArray(16))
-        if (::visualPaneVisualizerView.isInitialized) visualPaneVisualizerView.updateData(FloatArray(16))
         super.onPause()
     }
 
@@ -402,8 +411,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val source = service?.analysisSource
         if (!isPlayerResumed || (!CastManager.isCasting && sessionId <= 0) || source == null) {
             visualizerBridge?.detach()
+            if (::liveVisualizationView.isInitialized) liveVisualizationView.setPlaybackActive(false)
             if (::visualizerView.isInitialized) visualizerView.updateData(FloatArray(16))
-            if (::visualPaneVisualizerView.isInitialized) visualPaneVisualizerView.updateData(FloatArray(16))
             return
         }
         visualizerBridge?.attach(source) {
@@ -414,11 +423,18 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
-        if (newConfig.orientation != android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
-            exitLandscapeVideoFullscreen()
+        if (isLandscapeVideoFullscreen) {
+            // Fullscreen is a UI state, not a side effect of landscape layout.
+            // Keep the media host attached and let it remeasure for either
+            // landscape rotation without rebuilding the hidden player windows.
+            fullscreenVideoHost?.requestLayout()
+            artCard.requestLayout()
+            updateSystemBarsForOrientation()
+            return
         }
         configureSkinLayout()
         applyTheme(ThemeManager.getAudioPlayerTheme(this))
+        updateTrackView(AudioPlayerService.currentService?.currentTrack)
         updateSystemBarsForOrientation()
     }
 
@@ -430,11 +446,12 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     /** Hide Android's status and navigation bars in landscape, restoring them in portrait. */
     @Suppress("DEPRECATION")
     private fun updateSystemBarsForOrientation() {
-        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val immersive = isLandscapeVideoFullscreen ||
+            resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         if (Build.VERSION.SDK_INT >= 30) {
             window.insetsController?.let { controller ->
                 controller.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                if (landscape) controller.hide(android.view.WindowInsets.Type.systemBars())
+                if (immersive) controller.hide(android.view.WindowInsets.Type.systemBars())
                 else controller.show(android.view.WindowInsets.Type.systemBars())
             }
             if (::rootLayout.isInitialized) rootLayout.requestApplyInsets()
@@ -444,7 +461,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
             View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
         val decor = window.decorView
-        decor.systemUiVisibility = if (landscape) decor.systemUiVisibility or immersiveFlags
+        decor.systemUiVisibility = if (immersive) decor.systemUiVisibility or immersiveFlags
         else decor.systemUiVisibility and immersiveFlags.inv()
         if (::rootLayout.isInitialized) rootLayout.requestApplyInsets()
     }
@@ -1111,17 +1128,50 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     }
 
     private var isLandscapeVideoFullscreen = false
+    private var previousRequestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    private var previousWindowedConfigurationOrientation = android.content.res.Configuration.ORIENTATION_UNDEFINED
+    private var previousWindowedDisplayRotation = android.view.Surface.ROTATION_0
+    private val fullscreenButtonHandler = Handler(Looper.getMainLooper())
+    private val hideFullscreenButton = Runnable {
+        if (::fullscreenVideoButton.isInitialized) fullscreenVideoButton.visibility = View.GONE
+        fullscreenVideoControls?.visibility = View.GONE
+    }
 
     private fun toggleLandscapeVideoFullscreen() {
-        if (resources.configuration.orientation != android.content.res.Configuration.ORIENTATION_LANDSCAPE ||
-            AudioPlayerService.currentService?.currentTrack?.mediaKind != PlaylistMediaKind.VIDEO ||
-            ThemeManager.getAudioPlayerTheme(this).id !in setOf(AppThemeId.WINAMP_CLASSIC, AppThemeId.CUSTOM_WSZ)) return
-        if (isLandscapeVideoFullscreen) exitLandscapeVideoFullscreen() else enterLandscapeVideoFullscreen()
+        if (isLandscapeVideoFullscreen) {
+            exitLandscapeVideoFullscreen()
+        } else if (canShowVisualFullscreen()) {
+            enterLandscapeVideoFullscreen()
+        }
+    }
+
+    private fun showFullscreenVideoButton() {
+        if ((!isLandscapeVideoFullscreen && !canShowVisualFullscreen()) || !::fullscreenVideoButton.isInitialized) return
+        fullscreenVideoButton.text = if (isLandscapeVideoFullscreen) "⤡" else "⛶  Full screen"
+        fullscreenVideoButton.contentDescription = if (isLandscapeVideoFullscreen) {
+            "Return to windowed visual media"
+        } else {
+            "Open visual media full screen in landscape"
+        }
+        fullscreenVideoButton.visibility = View.VISIBLE
+        if (isLandscapeVideoFullscreen) {
+            fullscreenVideoControls?.visibility = View.VISIBLE
+            updateFullscreenPlayPauseControl()
+        }
+        fullscreenButtonHandler.removeCallbacks(hideFullscreenButton)
+        fullscreenButtonHandler.postDelayed(hideFullscreenButton, 4_000L)
     }
 
     private fun enterLandscapeVideoFullscreen() {
-        if (isLandscapeVideoFullscreen || !::artCard.isInitialized) return
+        if (isLandscapeVideoFullscreen || !::artCard.isInitialized ||
+            !canShowVisualFullscreen()) return
         isLandscapeVideoFullscreen = true
+        previousRequestedOrientation = requestedOrientation
+        previousWindowedConfigurationOrientation = resources.configuration.orientation
+        previousWindowedDisplayRotation = currentDisplayRotation()
+        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        fullscreenButtonHandler.removeCallbacks(hideFullscreenButton)
+        fullscreenVideoButton.visibility = View.GONE
         preFullscreenVisibility = (0 until rootLayout.childCount)
             .map { rootLayout.getChildAt(it) }
             .associateWith { it.visibility }
@@ -1131,10 +1181,15 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val host = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
             isClickable = true
-            setOnClickListener { toggleLandscapeVideoFullscreen() }
+            setOnClickListener { showFullscreenVideoButton() }
         }
         fullscreenVideoHost = host
         host.addView(artCard, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+        fullscreenVideoControls = createFullscreenVideoControls().also { controls ->
+            host.addView(controls, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                bottomMargin = dp(28)
+            })
+        }
         rootLayout.addView(host, LinearLayout.LayoutParams(-1, 0, 1f))
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_FULLSCREEN or
@@ -1143,9 +1198,15 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN)
     }
 
+    private fun canShowVisualFullscreen(): Boolean = AudioPlayerService.currentService?.currentTrack != null
+
     private fun exitLandscapeVideoFullscreen() {
         if (!isLandscapeVideoFullscreen) return
         isLandscapeVideoFullscreen = false
+        fullscreenButtonHandler.removeCallbacks(hideFullscreenButton)
+        if (::fullscreenVideoButton.isInitialized) fullscreenVideoButton.visibility = View.GONE
+        fullscreenVideoControls = null
+        fullscreenPlayPauseControl = null
         fullscreenVideoHost?.let { host ->
             (artCard.parent as? android.view.ViewGroup)?.removeView(artCard)
             rootLayout.removeView(host)
@@ -1164,6 +1225,102 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             window.decorView.systemUiVisibility = it
         }
         preFullscreenSystemUiVisibility = null
+        requestedOrientation = windowedOrientationRequest(
+            previousWindowedConfigurationOrientation,
+            previousWindowedDisplayRotation,
+            previousRequestedOrientation,
+        )
+        previousRequestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        previousWindowedConfigurationOrientation = android.content.res.Configuration.ORIENTATION_UNDEFINED
+        previousWindowedDisplayRotation = android.view.Surface.ROTATION_0
+    }
+
+    @Suppress("DEPRECATION")
+    private fun currentDisplayRotation(): Int = if (Build.VERSION.SDK_INT >= 30) {
+        display?.rotation ?: windowManager.defaultDisplay.rotation
+    } else {
+        windowManager.defaultDisplay.rotation
+    }
+
+    private fun createFullscreenVideoControls(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER
+        setPadding(dp(8), dp(7), dp(8), dp(7))
+        background = GradientDrawable().apply {
+            cornerRadius = dp(14).toFloat()
+            setColor(0xdd101318.toInt())
+            setStroke(dp(1), 0x99ffffff.toInt())
+        }
+        elevation = dp(8).toFloat()
+        isClickable = true
+        isFocusable = true
+        visibility = View.GONE
+
+        addFullscreenControl("⏮", "Previous track") {
+            AudioPlayerService.currentService?.playPrevious()
+        }
+        addFullscreenControl("−10", "Back 10 seconds") { seekFullscreenMediaBy(-10_000L) }
+        fullscreenPlayPauseControl = addFullscreenControl("▶", "Play") {
+            toggleCurrentMediaPlayback()
+            updatePlayPauseButton(currentMediaIsPlaying())
+        }
+        addFullscreenControl("+10", "Forward 10 seconds") { seekFullscreenMediaBy(10_000L) }
+        addFullscreenControl("⏭", "Next track") {
+            AudioPlayerService.currentService?.playNext()
+        }
+    }
+
+    private fun LinearLayout.addFullscreenControl(label: String, description: String, action: () -> Unit): TextView =
+        TextView(this@AudioPlayerActivity).apply {
+            text = label
+            textSize = if (label.length > 2) 16f else 22f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            contentDescription = description
+            isClickable = true
+            isFocusable = true
+            setPadding(dp(8), 0, dp(8), 0)
+            layoutParams = LinearLayout.LayoutParams(dp(58), dp(52))
+            setOnClickListener {
+                action()
+                if (isLandscapeVideoFullscreen) showFullscreenVideoButton()
+            }
+        }.also { addView(it) }
+
+    private fun seekFullscreenMediaBy(offsetMs: Long) {
+        val service = AudioPlayerService.currentService ?: return
+        when (service.currentTrack?.mediaKind) {
+            PlaylistMediaKind.VIDEO -> {
+                val playback = visualVideoPlayback ?: return
+                playback.seekTo(VideoControls.seekPosition(playback.positionMs + offsetMs, playback.durationMs))
+            }
+            PlaylistMediaKind.AUDIO, PlaylistMediaKind.ANSI -> {
+                val casting = CastManager.isCasting
+                val position = if (casting) CastManager.displayPositionMs else service.currentPosition.toLong()
+                val duration = (if (casting) CastManager.displayDurationMs else service.currentDuration.toLong())
+                    .takeIf { it > 0L }
+                val target = VideoControls.seekPosition(position + offsetMs, duration)
+                if (casting) CastManager.seek(target) else service.seekTo(target.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+            }
+            else -> return
+        }
+        updateDisplayedProgress(service)
+    }
+
+    private fun currentMediaIsPlaying(): Boolean {
+        val service = AudioPlayerService.currentService ?: return false
+        return when (service.currentTrack?.mediaKind) {
+            PlaylistMediaKind.VIDEO -> visualVideoPlayback?.isPlaying == true
+            else -> if (CastManager.isCasting) CastManager.isRemotePlaying else service.isPlaying
+        }
+    }
+
+    private fun updateFullscreenPlayPauseControl() {
+        val control = fullscreenPlayPauseControl ?: return
+        val playing = currentMediaIsPlaying()
+        control.text = if (playing) "⏸" else "▶"
+        control.contentDescription = if (playing) "Pause" else "Play"
     }
 
     private fun setupUI() {
@@ -1491,7 +1648,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 bottomMargin = dp(12)
             }
             clipToOutline = true
-            setOnClickListener { toggleLandscapeVideoFullscreen() }
+            setOnClickListener { showFullscreenVideoButton() }
         }
 
         ansiTerminalView = AnsiTerminalView(this) {
@@ -1507,11 +1664,19 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             scaleType = ImageView.ScaleType.FIT_CENTER
             layoutParams = FrameLayout.LayoutParams(-1, -1)
             contentDescription = "Visual media"
+            setOnClickListener { showFullscreenVideoButton() }
         }
         artCard.addView(albumArtView)
 
-        // The lower-third background hugs its text; it does not paint a band
-        // across the visualization window. The spectrum remains a separate overlay.
+        liveVisualizationView = LiveVisualizationView(this).apply {
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(-1, -1)
+            setOnClickListener { showFullscreenVideoButton() }
+        }
+        artCard.addView(liveVisualizationView)
+
+        // The lower-third background hugs its text; the spectrum now drives the
+        // full-width fire simulation rather than painting a separate graph.
         visualPaneMetadata = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1543,14 +1708,12 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             leftMargin = dp(8)
             bottomMargin = dp(8)
         })
-        visualPaneVisualizerView = VisualizerView(this).apply {
-            contentDescription = "Audio visualization"
-            isPlaying = false
+        liveVisualizationView.onArtworkOpacityChanged = { opacity ->
+            if (!isDestroyed) {
+                albumArtView.alpha = if (liveVisualizationView.drawsArtwork) 0f else opacity
+                visualPaneMetadata.alpha = opacity
+            }
         }
-        artCard.addView(visualPaneVisualizerView, FrameLayout.LayoutParams(dp(92), dp(42), Gravity.BOTTOM or Gravity.END).apply {
-            rightMargin = dp(8)
-            bottomMargin = dp(8)
-        })
         artCard.addOnLayoutChangeListener { _, left, _, right, _, _, _, _, _ ->
             val textMax = ((right - left) * 0.72f).toInt().coerceAtLeast(dp(80))
             visualPaneTitleText.maxWidth = textMax
@@ -1564,6 +1727,26 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             layoutParams = lp
         }
         artCard.addView(loadingIndicator)
+        fullscreenVideoButton = TextView(this).apply {
+            text = "⛶  Full screen"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(0xD9000000.toInt())
+                setStroke(dp(1), 0x99ffffff.toInt())
+            }
+            contentDescription = "Open video full screen in landscape"
+            visibility = View.GONE
+            setOnClickListener { toggleLandscapeVideoFullscreen() }
+        }
+        artCard.addView(fullscreenVideoButton, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
+            topMargin = dp(10)
+            rightMargin = dp(10)
+        })
 
         mainColumn.addView(artCard)
         setupDockedVisualWindow()
@@ -1799,14 +1982,18 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         // One capture bridge serves the normal visual pane and optional classic skins.
         // It used to be created only by the Winamp setup path, which left the standard
         // player's visible spectrum with no PCM source attached.
-        visualizerBridge = RealAudioVisualizerBridge {
-            val playing = if (CastManager.isCasting) CastManager.isRemotePlaying
-                else AudioPlayerService.currentService?.isPlaying == true
-            visualizerBridge?.getSpectrum(visualizerBands, isPlaying = playing)
-            if (::visualizerView.isInitialized) visualizerView.updateData(visualizerBands)
-            if (::visualPaneVisualizerView.isInitialized) visualPaneVisualizerView.updateData(visualizerBands)
-            if (::winampMainWindowView.isInitialized) winampMainWindowView.invalidate()
-        }
+        visualizerBridge = RealAudioVisualizerBridge(
+            onUpdate = {
+                val playing = if (CastManager.isCasting) CastManager.isRemotePlaying
+                    else AudioPlayerService.currentService?.isPlaying == true
+                visualizerBridge?.getSpectrum(visualizerBands, isPlaying = playing)
+                if (::visualizerView.isInitialized) visualizerView.updateData(visualizerBands)
+                if (::winampMainWindowView.isInitialized) winampMainWindowView.invalidate()
+            },
+            onFeatures = { frame ->
+                if (::liveVisualizationView.isInitialized) liveVisualizationView.submitAudioFeatures(frame)
+            },
+        )
         if (::winampMainWindowView.isInitialized) winampMainWindowView.visualizerBridge = visualizerBridge
     }
 
@@ -2693,7 +2880,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private fun setPlaylistImageDrawable(uri: Uri, bitmap: Bitmap) {
         (albumArtView.drawable as? android.graphics.drawable.Animatable)?.stop()
-        val target = visualAnimationCache[uri.toString()] ?: BitmapDrawable(resources, bitmap)
+        val target = visualAnimationCache[uri.toString()] ?: BitmapDrawable(resources, bitmap).apply { isFilterBitmap = true }
         showPlaylistImageDrawable(target)
         (target as? android.graphics.drawable.Animatable)?.start()
     }
@@ -2734,6 +2921,24 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         ansiTerminalView.alpha = 1f
         ansiTerminalView.visibility = View.VISIBLE
         albumArtView.animate().alpha(1f).setDuration(duration).start()
+        ansiTerminalView.animate().alpha(0f).setDuration(duration).withEndAction {
+            if (!isShowingAnsiOverlay) {
+                ansiTerminalView.visibility = View.GONE
+                ansiTerminalView.alpha = 1f
+                ansiTerminalView.setDocument(null)
+            }
+        }.start()
+    }
+
+    private fun crossfadeFromAnsiToLiveArtwork() {
+        val duration = PlaylistVisualTiming.IMAGE_CROSSFADE_DURATION_MS
+        liveVisualizationView.animate().cancel()
+        liveVisualizationView.alpha = 0f
+        liveVisualizationView.visibility = View.VISIBLE
+        ansiTerminalView.animate().cancel()
+        ansiTerminalView.alpha = 1f
+        ansiTerminalView.visibility = View.VISIBLE
+        liveVisualizationView.animate().alpha(1f).setDuration(duration).start()
         ansiTerminalView.animate().alpha(0f).setDuration(duration).withEndAction {
             if (!isShowingAnsiOverlay) {
                 ansiTerminalView.visibility = View.GONE
@@ -2812,7 +3017,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         }
         playback.view.visibility = View.GONE
         playback.view.isClickable = true
-        playback.view.setOnClickListener { toggleLandscapeVideoFullscreen() }
+        playback.view.setOnClickListener { showFullscreenVideoButton() }
         artCard.addView(playback.view, 1, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
         visualVideoPlayback = playback
         return playback
@@ -2820,7 +3025,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private fun loadPlaylistVideo(track: AudioTrack, generation: Long) {
         albumArtView.visibility = View.GONE
-        visualizerPaneVisualizerVisibility(false)
         loadingIndicator.visibility = View.VISIBLE
         val playback = try {
             ensureVisualVideoPlayback(track).also { it.view.visibility = View.VISIBLE }
@@ -2860,10 +3064,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 }
             }
         }
-    }
-
-    private fun visualizerPaneVisualizerVisibility(visible: Boolean) {
-        visualPaneVisualizerView.visibility = if (visible) View.VISIBLE else View.GONE
     }
 
     private fun applyTheme(theme: ThemeColors) {
@@ -2930,8 +3130,10 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         dockedEqualizerView.visibility = if (isWinamp && winampEqualizerWindowOpen) View.VISIBLE else View.GONE
         dockedEqualizerView.invalidate()
         wmpPlayerLayout.setActive(isWmp)
-        if (isWinamp) attachArtCardToVisualWindow(true)
-        else if (!isWmp) attachArtCardToVisualWindow(false)
+        if (!isLandscapeVideoFullscreen) {
+            if (isWinamp) attachArtCardToVisualWindow(true)
+            else if (!isWmp) attachArtCardToVisualWindow(false)
+        }
 
         if (isWinamp) {
             skinContainer.visibility = View.VISIBLE
@@ -3048,7 +3250,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         // Visualizer styling
         visualizerView.applyTheme(theme)
         visualizerView.visibility = View.VISIBLE
-        visualPaneVisualizerView.applyTheme(theme)
 
         // Seekbar thumb
         val seekThumb = if (isWinamp) ThemeManager.createSeekThumbDrawable() else null
@@ -3232,6 +3433,10 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private fun updatePlayPauseButton(isPlaying: Boolean) {
         val displayedPlaying = if (AudioPlayerService.currentService?.currentTrack?.mediaKind == PlaylistMediaKind.VIDEO)
             visualVideoPlaying else isPlaying
+        fullscreenPlayPauseControl?.let { control ->
+            control.text = if (displayedPlaying) "⏸" else "▶"
+            control.contentDescription = if (displayedPlaying) "Pause" else "Play"
+        }
         val theme = ThemeManager.getAudioPlayerTheme(this)
         if (theme.id == AppThemeId.WMP_GLASS) {
             refreshWmpControls(displayedPlaying)
@@ -3554,7 +3759,17 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     }
 
     private fun updateTrackView(track: AudioTrack?) {
-        if (track == null) return
+        if (track == null) {
+            if (::liveVisualizationView.isInitialized) {
+                liveVisualizationView.visibility = View.GONE
+                liveVisualizationView.setPlaybackActive(false)
+                liveVisualizationView.hardReset()
+                lastVisualizationArtwork = null
+            }
+            if (::albumArtView.isInitialized) albumArtView.alpha = 1f
+            if (::visualPaneMetadata.isInitialized) visualPaneMetadata.alpha = 1f
+            return
+        }
         val service = AudioPlayerService.currentService
         val ansiOverlay = service?.activeAnsiOverlay?.takeIf {
             track.mediaKind == PlaylistMediaKind.AUDIO &&
@@ -3573,6 +3788,12 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             (albumArtView.drawable as? android.graphics.drawable.Animatable)?.stop()
             stopVisualImageAnimation()
             stopVisualVideo()
+            liveVisualizationView.animate().cancel()
+            liveVisualizationView.alpha = 1f
+            liveVisualizationView.visibility = View.GONE
+            liveVisualizationView.setPlaybackActive(false)
+            albumArtView.alpha = 1f
+            visualPaneMetadata.alpha = 1f
         }
         val displayTitle = if (!track.artist.isNullOrBlank() && track.artist != "Unknown Artist") {
             "${track.artist} - ${track.title}"
@@ -3588,15 +3809,21 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             track.album?.takeIf(String::isNotBlank)?.let { "ALBUM  $it" }
         ).joinToString("\n")
 
+        val activeArtwork = track.artwork ?: track.directoryArtwork
+            ?: if (track.mediaKind == PlaylistMediaKind.AUDIO && !track.directoryName.isNullOrBlank())
+                directoryEntryBitmap(track, dp(256)) else null
+
         val generation = visualLoadGeneration.get()
         when (track.mediaKind) {
             PlaylistMediaKind.ANSI -> {
+                albumArtView.alpha = 1f
+                visualPaneMetadata.alpha = 1f
+                liveVisualizationView.visibility = View.GONE
                 isShowingAnsiOverlay = false
                 albumArtView.visibility = View.GONE
                 ansiTerminalView.visibility = View.VISIBLE
                 ansiTerminalView.alpha = 1f
                 visualPaneMetadata.visibility = View.GONE
-                visualPaneVisualizerView.visibility = View.GONE
                 val presentation = service?.currentAnsiPresentation
                 ansiTerminalView.setDocument(presentation?.terminal)
                 ansiTerminalView.setPlaying(service?.isPlaying == true)
@@ -3608,6 +3835,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 }
             }
             PlaylistMediaKind.IMAGE -> {
+                visualPaneMetadata.alpha = 1f
+                liveVisualizationView.visibility = View.GONE
                 isShowingAnsiOverlay = false
                 ansiTerminalView.setPlaying(false)
                 if (!wasShowingAnsi) {
@@ -3620,10 +3849,11 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 visualPaneDetailsText.text = metadataDetails.ifBlank {
                     "IMAGE  ${track.sourceMimeType ?: com.infinifolder.mime.MimeRegistry.guess(track.fileName)}"
                 }
-                visualizerPaneVisualizerVisibility(false)
                 if (changedVisual) loadPlaylistImage(track, generation)
             }
             PlaylistMediaKind.VIDEO -> {
+                visualPaneMetadata.alpha = 1f
+                liveVisualizationView.visibility = View.GONE
                 isShowingAnsiOverlay = false
                 ansiTerminalView.setPlaying(false)
                 if (!wasShowingAnsi) {
@@ -3634,14 +3864,23 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 albumArtView.visibility = View.VISIBLE
                 if (wasShowingAnsi) albumArtView.alpha = 0f
                 visualPaneDetailsText.text = metadataDetails.ifBlank { "VIDEO" }
-                visualizerPaneVisualizerVisibility(false)
                 if (changedVisual) loadPlaylistVideo(track, generation)
             }
             PlaylistMediaKind.AUDIO -> {
+                val audioArtwork = track.artwork ?: track.directoryArtwork
+                if (changedVisual || lastVisualizationArtwork !== audioArtwork) {
+                    liveVisualizationView.seedFromArtwork(audioArtwork)
+                    lastVisualizationArtwork = audioArtwork
+                    albumArtView.alpha = 1f
+                    visualPaneMetadata.alpha = 1f
+                }
                 visualPaneMetadata.visibility = View.VISIBLE
                 visualPaneDetailsText.text = metadataDetails
-                visualizerPaneVisualizerVisibility(true)
                 if (ansiOverlay != null) {
+                    albumArtView.alpha = 1f
+                    visualPaneMetadata.alpha = 1f
+                    liveVisualizationView.visibility = View.GONE
+                    liveVisualizationView.setPlaybackActive(false)
                     isShowingAnsiOverlay = true
                     albumArtView.visibility = View.GONE
                     ansiTerminalView.visibility = View.VISIBLE
@@ -3651,32 +3890,30 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                     ansiTerminalView.setPlaying(ansiOverlay.elapsedMs() < ansiOverlay.durationMs)
                     visualPaneDetailsText.text = "ANSI output · ${metadataDetails.ifBlank { track.title }}"
                 } else {
+                    liveVisualizationView.visibility = View.VISIBLE
+                    liveVisualizationView.setPlaybackActive(
+                        isPlayerResumed && (if (CastManager.isCasting) CastManager.isRemotePlaying else service?.isPlaying == true),
+                    )
                     isShowingAnsiOverlay = false
                     ansiTerminalView.setPlaying(false)
                     if (!wasShowingAnsi) {
                         ansiTerminalView.visibility = View.GONE
                         ansiTerminalView.setDocument(null)
                     }
-                    albumArtView.visibility = View.VISIBLE
-                    val audioArtwork = track.artwork ?: track.directoryArtwork
-                        ?: if (!track.directoryName.isNullOrBlank()) directoryEntryBitmap(track, dp(256)) else null
-                    val artDrawable = audioArtwork?.let { BitmapDrawable(resources, it) }
+                    albumArtView.visibility = if (audioArtwork != null) View.GONE else View.VISIBLE
+                    val artDrawable = activeArtwork?.let { BitmapDrawable(resources, it).apply { isFilterBitmap = true } }
                         ?: getDrawable(android.R.drawable.ic_media_play)
-                    if (audioArtwork != null) {
+                    if (activeArtwork != null) {
                         albumArtView.setBackgroundColor(Color.TRANSPARENT)
                     } else {
                         albumArtView.setBackgroundColor(ThemeManager.getAudioPlayerTheme(this).alternateBackground)
                     }
-                    if (wasShowingAnsi) crossfadeFromAnsiToAlbumArt(artDrawable)
-                    else if (changedVisual || albumArtView.visibility != View.VISIBLE) showPlaylistImageDrawable(artDrawable)
-                    else if (track.artwork != null) showPlaylistImageDrawable(artDrawable)
+                    if (wasShowingAnsi && audioArtwork != null) crossfadeFromAnsiToLiveArtwork()
+                    else if (wasShowingAnsi) crossfadeFromAnsiToAlbumArt(artDrawable)
+                    else if (audioArtwork == null && (changedVisual || albumArtView.drawable == null)) showPlaylistImageDrawable(artDrawable)
                 }
             }
         }
-
-        val activeArtwork = track.artwork ?: track.directoryArtwork
-            ?: if (track.mediaKind == PlaylistMediaKind.AUDIO && !track.directoryName.isNullOrBlank())
-                directoryEntryBitmap(track, dp(256)) else null
 
         val rep = com.infinifolder.audio.diagnostics.AudioPlaybackDiagnostics.currentReport
         val isBrRel = rep?.isBitrateRelevant ?: (track.isBitrateRelevant)
@@ -4493,7 +4730,11 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             updatePlayPauseButton(effectivePlaying)
             loadingIndicator.visibility = if (isLoading) View.VISIBLE else View.GONE
             visualizerView.isPlaying = effectivePlaying
-            visualPaneVisualizerView.isPlaying = effectivePlaying
+            liveVisualizationView.setPlaybackActive(
+                isPlayerResumed && effectivePlaying &&
+                    AudioPlayerService.currentService?.currentTrack?.mediaKind == PlaylistMediaKind.AUDIO &&
+                    liveVisualizationView.visibility == View.VISIBLE,
+            )
             if (::winampMainWindowView.isInitialized) {
                 winampMainWindowView.isPlaying = effectivePlaying
                 winampMainWindowView.isPaused = (!effectivePlaying && ((AudioPlayerService.currentService?.currentPosition ?: 0) > 0 || CastManager.isCasting))
@@ -4663,10 +4904,11 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
-        returnToFileManager()
+        if (isLandscapeVideoFullscreen) exitLandscapeVideoFullscreen() else returnToFileManager()
     }
 
     override fun onDestroy() {
+        fullscreenButtonHandler.removeCallbacks(hideFullscreenButton)
         skinAnimationHost?.close(); skinAnimationHost = null
         activePlaylistUiLoad = 0L
         playlistUiLoadStartedAt = 0L
@@ -4683,6 +4925,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         visualVideoPlayback?.close()
         visualVideoInput = null
         visualVideoPlayback = null
+        if (::liveVisualizationView.isInitialized) liveVisualizationView.close()
         directoryCoverExecutor.shutdownNow()
         pendingDirectoryCovers.clear()
         failedDirectoryCovers.clear()

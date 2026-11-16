@@ -5,6 +5,53 @@ Winamp skins. Application ID: `com.infinimedia`; Android 8.0 (API 26) or newer.
 Audio/video UI lives in `modules/viewer-audio` and `modules/viewer-video`.
 Reusable decoding, synthesis and timing belong to libinfinisound/libinfinivideo.
 
+## Live music visualization
+
+The visual-media pane now has an audio-reactive simulation overlay for audio
+tracks. A separate PCM analyzer publishes playback-position-timestamped RMS,
+peak, 16 spectrum bands and spectral-flux transients; a low-priority simulation
+thread advances at up to 30 Hz, independently of the audio output path. Album
+art seeds the color palette; the art and its metadata fade from the visual area
+as the simulation develops.
+
+The pure Kotlin `visualization-engine` module owns the rule-based music director,
+effect contracts and shared simulation fields. The director activates the laser
+from smoothed spectrum/energy and lightning on detected onsets. The continuous
+`smolder` effect is the former spectrum-fed heat and smoke source. The separate
+`fire` effect uses a classic low-resolution heat propagation model: audio
+ignites its lower edge, heat spreads upward and sideways, and each cell cools
+with slight variation. `slow-lightning` retains the existing strike behavior;
+`fast-lightning` waits for stronger spectral-flux peaks and leaves much less
+ambient heat. `wind` becomes active during energetic playback, changes speed
+and direction over time, wraps heat and smoke across both edges, and adds
+cooling. These effects exchange heat, flame, cooling, light, density and
+velocity through shared fields. Fire adds a limited upward momentum contribution.
+
+Album-art colors are selected from actual sampled pixels across grayscale
+levels and hue ranges, then deduplicated; the palette does not collapse narrow
+rainbow regions into an average color. Temperature and momentum fields also
+zoom and warp visible album art before it fades away. The old lower-right
+spectrum graph is removed from the visual pane. Video, image, ANSI and ANSI
+Music items retain their existing presentation paths.
+
+The analyzer emits 16 spectrum bands on a shared -72 dBFS to 0 dBFS scale,
+playback-timestamped PCM levels and onset features at about 30 updates per
+second. Kick-like low-band, snare-like mid-band and cymbal-like high-band attacks
+are heuristic frequency-region classifications, not instrument recognition.
+Bass/body onset intervals provide a smoothed BPM estimate and confidence; the
+frame also carries spectral centroid, stereo width/balance and zero-crossing
+rate. Synthetic-signal tests cover band placement, calibration, stereo behavior,
+onset classes, sustained notes and tempo. Musical quality, Android frame time
+and playback synchronization still require live device validation. MIDI and
+tracker event tempo is not yet passed through the common visualization frame.
+
+Planned extensions include harmony and phrase-boundary estimates, additional
+fluid, particle and geometric effects, and declarative presets. These are future
+directions, not requirements for the current build. The existing 320×180 CPU
+simulation is covered by JVM tests; no device performance result is claimed.
+
+Run the engine contract tests with `./gradlew :visualization-engine:test`.
+
 External storage is selected through libinfiniselect. Infinifolder adds advanced
 storage when installed; Android SAF remains available on its own. The APK does
 not include Infinifolder's remote clients, torrent engine or virtual filesystem
@@ -55,7 +102,8 @@ disconnect Cast before starting an ANSI item.
 
 ## Build script
 
-`./build.sh` builds the debug APK and runs the application's JVM unit tests.
+`./build.sh` builds the debug APK and runs the application's JVM unit tests,
+including the pure Kotlin visualization-engine tests.
 It fetches only the pinned library closure before invoking this checkout's Gradle wrapper.
 Additional Gradle arguments are forwarded unchanged, for example `--max-workers=1` or `-PtargetAbi=arm64-v8a`.
 
