@@ -1814,7 +1814,20 @@ class AudioPlayerService : Service() {
     }
 
     private fun readTrackTags(input: AudioPlaybackInput, includeArtwork: Boolean): AudioTags {
-        val streamTags = AudioProcessing.readTags(input.resource, includeArtwork)
+        // Tag readers make positional reads. On a remote provider, several
+        // round trips over a mobile connection can exceed the short local-file
+        // budget even though playback and the SFTP source are healthy.
+        val readBudgetNanos = if (input.access == "positional-source")
+            TimeUnit.SECONDS.toNanos(30)
+        else TimeUnit.SECONDS.toNanos(10)
+        val streamTags = AudioProcessing.readTags(
+            input.resource,
+            includeArtwork,
+            io.github.gretchycat.infinistream.CancellationToken.NONE,
+            16L * 1024 * 1024,
+            512,
+            readBudgetNanos
+        )
         if (!includeArtwork) return streamTags
         // Stream readers sometimes return the embedded cover but omit textual tags,
         // while Android's file-backed retriever can still supply title/artist/album.
@@ -1856,7 +1869,12 @@ class AudioPlayerService : Service() {
                 if (pic != null) {
                     artwork = decodeSampledBitmap(pic, 512, 512)
                 }
-            } catch (_: Exception) {}
+            } catch (cancel: java.io.InterruptedIOException) {
+                throw cancel
+            } catch (error: Exception) {
+                android.util.Log.w("AudioPlayerService", "Current track tags probe failed", error)
+                throw error
+            }
 
             // Unknown duration is filled by the opened PCM source/player. Never decode
             // the complete source just to enrich metadata before playback can begin.
@@ -2296,6 +2314,10 @@ class AudioPlayerService : Service() {
                         }
                     }
                     notifyPlaylistUpdated()
+                } else {
+                    synchronized(metadataScannerLock) {
+                        if (gen == metadataScannerGeneration.get()) work.markFailed(track)
+                    }
                 }
                 try { Thread.sleep(25) } catch (_: InterruptedException) { break }
             }
@@ -2434,6 +2456,7 @@ class AudioPlayerService : Service() {
         } catch (error: Exception) {
             if (Thread.currentThread().isInterrupted) throw error
             android.util.Log.w("AudioPlayerService", "Playlist tags probe failed", error)
+            throw error
         }
         return resolveDirectoryArtworkLight(result)
     }

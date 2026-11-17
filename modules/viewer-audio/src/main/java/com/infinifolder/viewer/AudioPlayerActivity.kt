@@ -576,8 +576,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 if (parentUri != null) {
                     try {
                         val siblings = MediaSourceAdapter.listFolder(this, parentUri)
-                        val queueMultimedia = intent?.getBooleanExtra("queueMultimedia", false) == true
-                        tracks.addAll(PlaylistExpander.expandResourceEntries(this, siblings, queueMultimedia = queueMultimedia))
+                        tracks.addAll(PlaylistExpander.expandResourceEntries(this, siblings))
                     } catch (_: Exception) {}
                 }
             }
@@ -633,30 +632,24 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         }.start()
     }
 
-    private fun openMediaSelection(includeAudio: Boolean, includeVideo: Boolean, includeImage: Boolean) {
+    private fun openMediaSelection() {
         if (isFinishing || isDestroyed) return
         playlistSelectionPending = true
         val formats = buildList {
-            if (includeAudio) addAll(runCatching {
+            addAll(runCatching {
                 RuntimeCapabilities.library("sound").supportedFormats(Operations.PLAY).map { it.format }
             }.getOrDefault(emptyList()))
-            if (includeImage) addAll(runCatching {
+            addAll(runCatching {
                 RuntimeCapabilities.library("canvas").supportedFormats(Operations.THUMBNAIL).map { it.format }
             }.getOrDefault(emptyList()))
-            if (includeVideo) addAll(runCatching {
+            addAll(runCatching {
                 RuntimeCapabilities.library("video").supportedFormats(Operations.PLAY).map { it.format }
             }.getOrDefault(emptyList()))
         }
-        val categoryMimes = buildList {
-            if (includeAudio) add("audio/*")
-            if (includeVideo) add("video/*")
-            if (includeImage) add("image/*")
-            if (includeAudio || includeImage) addAll(AnsiPlaybackSupport.mimeTypes)
-        }
+        val categoryMimes = listOf("audio/*", "video/*", "image/*") + AnsiPlaybackSupport.mimeTypes
         val mimes = (categoryMimes + formats.flatMap { it.mimeTypes })
             .filter { it.isNotBlank() && it != "*/*" }.distinct().sorted()
-        val ansiExtensions = if (includeAudio || includeImage) AnsiPlaybackSupport.extensions else emptySet()
-        val extensions = (formats.flatMap { it.extensions } + ansiExtensions)
+        val extensions = (formats.flatMap { it.extensions } + AnsiPlaybackSupport.extensions)
             .map { it.removePrefix(".").lowercase(Locale.ROOT) }.filter(String::isNotBlank).distinct().sorted()
         InfiniSelect.open(this, OpenRequest(
             clientId = "infinimedia",
@@ -667,7 +660,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             hideUnsupported = extensions.isNotEmpty(),
             multipleSelectionDelivery = MultipleSelectionDelivery.JSPF,
             metadataFormat = SelectionMetadataFormat.XML,
-            allowRecursiveAudioDirectories = includeAudio,
+            // The recursive scan applies these MIME and extension filters to all media types.
+            allowRecursiveAudioDirectories = true,
             progressReceiver = object : android.os.ResultReceiver(Handler(Looper.getMainLooper())) {
                 override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
                     if (!playlistSelectionPending) return
@@ -868,36 +862,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             .show()
     }
 
-    private fun showMediaCategoryDialog() {
-        val categories = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(4), dp(20), dp(4))
-        }
-        val audio = android.widget.CheckBox(this).apply {
-            text = "Audio"
-            isChecked = true
-        }
-        val video = android.widget.CheckBox(this).apply {
-            text = "Video"
-        }
-        val image = android.widget.CheckBox(this).apply {
-            text = "Image"
-        }
-        categories.addView(audio)
-        categories.addView(video)
-        categories.addView(image)
-        ThemeManager.createDialogBuilder(this)
-            .setTitle("Add media to playlist")
-            .setView(categories)
-            .setPositiveButton("Choose files") { _, _ ->
-                if (audio.isChecked || video.isChecked || image.isChecked) {
-                    openMediaSelection(audio.isChecked, video.isChecked, image.isChecked)
-                } else Toast.makeText(this, "Select at least one media type", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
     private fun showAddTracksDialog() {
         val service = AudioPlayerService.currentService
         val (trackCount, currentIndex) = if (service == null) 0 to -1 else synchronized(service.playlist) {
@@ -905,14 +869,14 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         }
         if (!shouldAskPlaylistInsertion(trackCount, currentIndex)) {
             pendingPlaylistInsertion = PlaylistInsertion.END
-            showMediaCategoryDialog()
+            openMediaSelection()
             return
         }
         ThemeManager.createDialogBuilder(this)
-            .setTitle("Add tracks")
-            .setItems(arrayOf("After the current song", "At the end of the playlist")) { _, which ->
+            .setTitle("Queue media")
+            .setItems(arrayOf("After the current item", "At the end of the queue")) { _, which ->
                 pendingPlaylistInsertion = if (which == 0) PlaylistInsertion.AFTER_CURRENT else PlaylistInsertion.END
-                showMediaCategoryDialog()
+                openMediaSelection()
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -960,10 +924,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                         "audio.playlist.prepare.playlist-expanded",
                         "source=selected-playlist tracks=${tracks.size} elapsedMs=$playlistExpansionElapsedMs")
                 } else {
-                    // Recursive selections stay grouped by their source directory, with
-                    // each album's files alphabetical inside the group. This keeps one
-                    // directory image row ahead of that album instead of interleaving
-                    // equally named track numbers from different albums.
+                    // Recursive selections stay grouped by source directory, with each
+                    // album's files alphabetical inside the group and its cover first.
                     setPlaylistUiLoadStage(loadId, "Sorting ${items.size} selected items…", "phase=sort")
                     val sortStartedAt = android.os.SystemClock.elapsedRealtime()
                     val recursive = items.any { it.directoryUri != null && it.directoryArtworkMetadataResolved }
@@ -982,7 +944,40 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                         "audio.playlist.prepare.sorted",
                         "items=${items.size} recursive=$recursive elapsedMs=$sortElapsedMs")
 
+                    val coverDirectories = mutableSetOf<String>()
                     for (item in orderedItems) {
+                        val directoryIdentity = item.directoryReference
+                            ?: item.directoryUri?.toString()
+                        val coverUri = item.directoryCoverUri
+                        val coverReference = item.directoryCoverReference?.let { Uri.parse(it) }
+                            ?: coverUri?.let { coverAccessUri ->
+                                InfiniSelect.authoritativeUri(this, coverAccessUri.toString()) ?: coverAccessUri
+                            }
+                        val coverIdentity = coverReference?.let { reference ->
+                            (InfiniSelect.authoritativeUri(this, reference.toString()) ?: reference).toString()
+                        }
+                        if (recursive && directoryIdentity != null && coverDirectories.add(directoryIdentity) &&
+                            coverUri != null && coverIdentity != null) {
+                            val coverName = InfiniSelect.displayName(this, coverReference ?: coverUri)
+                                ?.takeIf(String::isNotBlank)
+                                ?: coverUri.lastPathSegment?.substringAfterLast('/')?.takeIf(String::isNotBlank)
+                                ?: "cover"
+                            val coverMime = com.infinifolder.mime.MimeRegistry.guess(coverName)
+                                .takeIf { it.startsWith("image/", ignoreCase = true) } ?: "image/*"
+                            tracks += AudioTrack(uri = coverUri, title = coverName, fileName = coverName,
+                                sourceReference = coverIdentity,
+                                directoryUri = item.directoryUri, directoryName = item.directoryName,
+                                directoryReference = item.directoryReference,
+                                directoryCoverUri = coverUri,
+                                directoryCoverReference = coverIdentity,
+                                directoryArtworkMetadataResolved = true,
+                                mediaKind = PlaylistMediaKind.IMAGE, sourceMimeType = coverMime)
+                        }
+                        val itemIdentity = InfiniSelect.authoritativeUri(this, item.authoritativeUri.toString())
+                            ?: item.authoritativeUri
+                        if (recursive && coverIdentity != null && itemIdentity.toString() == coverIdentity) {
+                            continue
+                        }
                         // Choose playlist handling from the filename extension only. The
                         // post-enqueue metadata work validates the actual content; probing
                         // each URI here can turn a multi-file selection into hundreds of
@@ -1027,7 +1022,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                     "audio.playlist.selection.prepared",
                     "items=${items.size} tracks=${tracks.size} playlistItems=$playlistItemsFound sortMs=$sortElapsedMs playlistExpansionMs=$playlistExpansionElapsedMs elapsedMs=${android.os.SystemClock.elapsedRealtime() - preparationStartedAt}")
                 if (loadId != activePlaylistUiLoad) return@Thread
-                setPlaylistUiLoadStage(loadId, "Sending ${tracks.size} tracks to the player…", "phase=prepared")
+                setPlaylistUiLoadStage(loadId, "Sending ${tracks.size} media items to the player…", "phase=prepared")
                 runOnUiThread {
                     if (isFinishing || isDestroyed || loadId != activePlaylistUiLoad) return@runOnUiThread
                     if (tracks.isEmpty()) {
@@ -1055,7 +1050,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                                 }
                                 return
                             }
-                            setPlaylistUiLoadStage(loadId, "Adding ${tracks.size} tracks to the playlist…", "phase=enqueue")
+                            setPlaylistUiLoadStage(loadId, "Adding ${tracks.size} media items to the queue…", "phase=enqueue")
                             val selectedTracks = synchronized(service.playlist) {
                                 selectedPlaylistIndices.mapNotNull { service.playlist.getOrNull(it) }
                             }
@@ -1064,7 +1059,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                             val queued = synchronized(service.playlist) { ArrayList(service.playlist) }
                             playlistUiExpectedTracks = queued.size
                             playlistUiExpectedRows = playlistDisplayRows(queued).size
-                            playlistUiCompletionToast = "Added ${tracks.size} ${if (tracks.size == 1) "track" else "tracks"}"
+                            playlistUiCompletionToast = "Added ${tracks.size} media ${if (tracks.size == 1) "item" else "items"}"
                             setPlaylistUiLoadStage(loadId, "Showing ${queued.size} tracks…", "phase=rows-queued expectedRows=$playlistUiExpectedRows")
                         }
                         addWhenReady(0)
@@ -2719,7 +2714,12 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         tracks.forEachIndexed { index, track ->
             val identity = track.directoryUri?.toString()
                 ?: track.directoryName?.takeIf(String::isNotBlank)?.let { "$it:${track.directoryCoverUri}" }
-            if (identity != null && identity != previousDirectory) rows += PlaylistDisplayRow.DirectoryImage(track)
+            val isQueuedDirectoryCover = track.mediaKind == PlaylistMediaKind.IMAGE &&
+                track.directoryCoverReference != null &&
+                track.authoritativeUri.toString() == track.directoryCoverReference
+            if (identity != null && identity != previousDirectory && !isQueuedDirectoryCover) {
+                rows += PlaylistDisplayRow.DirectoryImage(track)
+            }
             rows += PlaylistDisplayRow.Track(index, track)
             previousDirectory = identity
         }

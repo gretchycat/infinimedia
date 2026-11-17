@@ -63,7 +63,7 @@ class InfiniMediaActivity : ViewerActivity() {
                     sourceReference = authoritativeReference(uri, index),
                 )
             }
-            val playlist = runCatching { InfiniSelect.createJspfPlaylist(this, items, "Shared audio.jspf") }
+            val playlist = runCatching { InfiniSelect.createJspfPlaylist(this, items, "Shared media.jspf") }
                 .getOrElse { error ->
                     Toast.makeText(this, "Could not prepare the selected media: ${error.message ?: "missing storage location"}", Toast.LENGTH_LONG).show()
                     return
@@ -71,7 +71,7 @@ class InfiniMediaActivity : ViewerActivity() {
             Intent(this, com.infinifolder.viewer.AudioPlayerActivity::class.java).apply {
                 this.action = Intent.ACTION_VIEW
                 setDataAndType(playlist, "application/jspf+json")
-                putExtra("displayName", "Shared audio.jspf")
+                putExtra("displayName", "Shared media.jspf")
                 putExtra("mimeType", "application/jspf+json")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
@@ -108,7 +108,7 @@ class InfiniMediaActivity : ViewerActivity() {
     private fun displayName(uri: Uri): String = runCatching {
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
             ?.use { if (it.moveToFirst()) it.getString(0) else null }
-    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Audio track"
+    }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Media item"
 
     @Suppress("DEPRECATION")
     private fun Intent.getParcelableExtraCompat(key: String): Uri? =

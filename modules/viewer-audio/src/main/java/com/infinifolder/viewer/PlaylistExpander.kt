@@ -272,11 +272,14 @@ object PlaylistExpander {
     fun expandResourceEntries(
         context: Context?,
         entries: List<ResourceEntry>,
-        queueMultimedia: Boolean = false,
         visited: MutableSet<String> = mutableSetOf()
     ): List<AudioTrack> {
         val tracks = mutableListOf<AudioTrack>()
-        for (entry in entries) {
+        fun isDirectoryCover(entry: ResourceEntry): Boolean =
+            !entry.metadata.isDirectory && entry.metadata.name.startsWith("cover.", ignoreCase = true) &&
+                MediaTypeDetector.detect(entry.metadata.name, entry.metadata.mimeType) == MediaType.IMAGE
+        val orderedEntries = entries.filter(::isDirectoryCover) + entries.filterNot(::isDirectoryCover)
+        for (entry in orderedEntries) {
             if (entry.metadata.isDirectory) continue
             val authoritativeUri = context?.let { appContext ->
                 io.github.gretchycat.infiniselect.InfiniSelect.authoritativeUri(appContext, entry.uri.toString())
@@ -295,9 +298,10 @@ object PlaylistExpander {
             } else {
                 val type = MediaTypeDetector.detect(entry.metadata.name, entry.metadata.mimeType)
                 val ansi = AnsiPlaybackSupport.isAnsiFile(entry.metadata.name, entry.metadata.mimeType)
-                if (ansi || type == MediaType.AUDIO || (queueMultimedia && type == MediaType.VIDEO)) {
+                if (ansi || type == MediaType.AUDIO || type == MediaType.VIDEO || type == MediaType.IMAGE) {
                     val kind = if (ansi) PlaylistMediaKind.ANSI else when (type) {
                         MediaType.VIDEO -> PlaylistMediaKind.VIDEO
+                        MediaType.IMAGE -> PlaylistMediaKind.IMAGE
                         else -> PlaylistMediaKind.AUDIO
                     }
                     tracks.add(AudioTrack(authoritativeUri, entry.metadata.name, fileName = entry.metadata.name,

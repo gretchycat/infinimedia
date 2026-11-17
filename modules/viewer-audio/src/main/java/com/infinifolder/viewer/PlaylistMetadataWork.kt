@@ -4,6 +4,8 @@ package com.infinifolder.viewer
 internal class PlaylistMetadataWork {
     private data class Key(val uri: String, val start: Long, val length: Long)
     private val attempted = mutableSetOf<Key>()
+    private val retryPending = mutableSetOf<Key>()
+    private val retryUsed = mutableSetOf<Key>()
     private var priority = emptySet<Key>()
 
     private fun key(track: AudioTrack) = Key(track.uri.toString(), track.startByte, track.lengthBytes)
@@ -26,6 +28,16 @@ internal class PlaylistMetadataWork {
             if (track.mediaKind != PlaylistMediaKind.AUDIO) continue
             return track
         }
+        // Give transient remote read failures one more chance, after every
+        // other queued audio item has had its first metadata pass.
+        for (track in ordered) {
+            val trackKey = key(track)
+            if (trackKey !in retryPending || trackKey in retryUsed) continue
+            retryPending.remove(trackKey)
+            retryUsed.add(trackKey)
+            if (track.isUnreadable || track.mediaKind != PlaylistMediaKind.AUDIO) continue
+            return track
+        }
         return null
     }
 
@@ -36,6 +48,12 @@ internal class PlaylistMetadataWork {
 
     @Synchronized
     fun markAttempted(track: AudioTrack) { attempted.add(key(track)) }
+
+    @Synchronized
+    fun markFailed(track: AudioTrack) {
+        val trackKey = key(track)
+        if (trackKey !in retryUsed) retryPending.add(trackKey)
+    }
 
     fun matches(a: AudioTrack, b: AudioTrack): Boolean = key(a) == key(b)
 
