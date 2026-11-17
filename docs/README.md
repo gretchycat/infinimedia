@@ -4,6 +4,7 @@ This directory documents InfiniMedia's player, media-format behavior, and its
 integration with shared libraries. The application owns playback UI, queues,
 playlists, player settings, casting, and media presentation.
 
+- [Application description and implementation status](APPLICATION.md).
 - [Application architecture](architecture.md)
 - [Storage and URI integration](storage.md)
 - [Audio and sound formats](audio-formats.md)

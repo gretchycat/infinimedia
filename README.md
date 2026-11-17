@@ -1,4 +1,7 @@
 # InfiniMedia
+InfiniMedia is InfiniForge's independent audio/video player and media-presentation app. It owns
+playback, playlists, and visual presentation while consuming shared decoding and resource APIs. See
+the [application scope and implementation status](docs/APPLICATION.md).
 
 Independent Android audio/video player, playlists, visualizations, casting and
 Winamp skins. Application ID: `com.infinimedia`; Android 8.0 (API 26) or newer.
@@ -57,6 +60,11 @@ storage when installed; Android SAF remains available on its own. The APK does
 not include Infinifolder's remote clients, torrent engine or virtual filesystem
 implementation. The small shared UI and resource-support libraries adapt content
 URIs without depending on another application's source.
+
+See [InfiniMedia architecture](docs/architecture.md), [storage integration](docs/storage.md),
+and the [documentation index](docs/README.md) for the app-owned boundaries and
+format guides. InfiniFolder is an optional provider companion; the keyboard app
+is not part of this storage integration.
 
 ## Storage identities and playlists
 
@@ -147,7 +155,9 @@ existing portable tracker implementation and use the NDK for the other bridges.
 
 Compilation and local unit tests do not validate Android grants, audio output,
 casting, codecs installed on a device, or storage provider lifecycle behavior.
-See the architecture audit in Infinifolder for executed verification results.
+This README records InfiniMedia build checkpoints; the [historical suite-wide
+audit](https://github.com/infiniforge/infinifolder/blob/main/docs/architecture-audit.md)
+retains the earlier cross-app verification matrix.
 
 Extracted from gretchycat/infinifolder's viewer-audio, viewer-video and viewer-host
 sources; the originating repository retains their history. Original InfiniMedia code
