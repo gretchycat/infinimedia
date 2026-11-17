@@ -2,35 +2,35 @@
   "directory": "libraries",
   "repositories": {
     "libinfinicanvas": {
-      "url": "https://github.com/gretchycat/libinfinicanvas.git",
+      "url": "https://github.com/infiniforge/libinfinicanvas.git",
       "commit": "d6410bd4b6722be55ae674b6ed67198d00a61c46"
     },
     "libinfinicore": {
-      "url": "https://github.com/gretchycat/libinfinicore.git",
+      "url": "https://github.com/infiniforge/libinfinicore.git",
       "commit": "0f98a0e9c94e9de0133e4e1ab53a1274b0fd33d8"
     },
     "libinfiniscribe": {
-      "url": "https://github.com/gretchycat/libinfiniscribe.git",
+      "url": "https://github.com/infiniforge/libinfiniscribe.git",
       "commit": "87076fc147f6f315a302a51f539c160a45b3d1da"
     },
     "libinfiniselect": {
-      "url": "https://github.com/gretchycat/libinfiniselect.git",
+      "url": "https://github.com/infiniforge/libinfiniselect.git",
       "commit": "c5bb41fbe2416c59350a77a196c1ae9620a06c47"
     },
     "libinfinisound": {
-      "url": "https://github.com/gretchycat/libinfinisound.git",
+      "url": "https://github.com/infiniforge/libinfinisound.git",
       "commit": "d20f394ac6d386c3a2ecf0543d01be6db1c1bb3b"
     },
     "libinfinistream": {
-      "url": "https://github.com/gretchycat/libinfinistream.git",
+      "url": "https://github.com/infiniforge/libinfinistream.git",
       "commit": "6a551a523f3161902b3a1f70902fd2a4ee49a6cd"
     },
     "libinfiniui": {
-      "url": "https://github.com/gretchycat/libinfiniui.git",
+      "url": "https://github.com/infiniforge/libinfiniui.git",
       "commit": "45a4711d0b4d1c2ab75393ba6b4fb07a44c281de"
     },
     "libinfinivideo": {
-      "url": "https://github.com/gretchycat/libinfinivideo.git",
+      "url": "https://github.com/infiniforge/libinfinivideo.git",
       "commit": "22d234fd3c525b6d920ff3072f428ca7d2897d0e"
     }
   }

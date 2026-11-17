@@ -126,7 +126,7 @@ NDK 27.2.12479018 and CMake 3.22.1. Set `ANDROID_HOME` (or `sdk.dir` in this
 checkout's untracked `local.properties`).
 
 ```sh
-git clone https://github.com/gretchycat/infinimedia.git
+git clone https://github.com/infiniforge/infinimedia.git
 cd infinimedia
 ./build.sh --max-workers=1 --console=plain
 ```
