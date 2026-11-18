@@ -80,13 +80,13 @@ public class ThemeRuntimeCheck {
         int[] before,after;
         byte[] oraBytes=bytes("theme/main.ora");
         BitmapFrame ora=decode(oraBytes,"main.ora");
-        check(ora.getAnimation()!=null && ora.getColorCycling()==null,"Extended ORA XML creates a Canvas animation: "+ora.getDecodeDiagnostics());
+        check(ora.getAnimation()!=null && ora.getColorCycling()==null,"Embedded IFF palette creates a Canvas animation: "+ora.getDecodeDiagnostics());
         before=pixels(ora.getBitmap());after=before.clone();
         ora.getAnimation().render(120_000_000L,after,true);
-        check(!Arrays.equals(before,after),"Extended ORA palette ranges change pixels");
+        check(!Arrays.equals(before,after),"Embedded IFF palette ranges change ORA pixels");
         int[] oraSize=oraDimensions(oraBytes);
-        check(ora.getBitmap().getWidth()==oraSize[0] && ora.getBitmap().getHeight()==oraSize[1],"Extended ORA canvas dimensions retained");
-        pass("extended-ora-palette-cycle-direct-decode");
+        check(ora.getBitmap().getWidth()==oraSize[0] && ora.getBitmap().getHeight()==oraSize[1],"Embedded IFF ORA canvas dimensions retained");
+        pass("embedded-iff-ora-direct-decode");
         Bitmap input=Bitmap.createBitmap(4,3,Bitmap.Config.ARGB_8888);input.eraseColor(Color.MAGENTA);
         ByteArrayOutputStream stream=new ByteArrayOutputStream();input.compress(Bitmap.CompressFormat.PNG,100,stream);
         BitmapFrame png=decode(stream.toByteArray(),"not-a-bitmap.iff");

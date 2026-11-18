@@ -197,9 +197,9 @@ arbitrary filename or up to four same-size image layers. IFF palette cycling
 animates while the player is resumed and pauses with its lifecycle. SVG/SVGZ,
 including the preserved [`infini.svg`](infini.svg) source, render as still images;
 custom SVG color-cycling metadata is ignored. The default faceplate is authored
-in `theme/main.ora`; the skin packages the ORA unchanged and Canvas renders its
-palette-cycle extension directly. The complete decoded canvas is scaled to fit
-the Winamp faceplate.
+in `theme/main.ora`; the skin packages the ORA unchanged and Canvas cycles its
+visible IFF layer directly over the static base. The complete decoded canvas is
+scaled to fit the Winamp faceplate.
 
 ```sh
 python3 scripts/test-package-default-theme.py

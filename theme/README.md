@@ -1,10 +1,10 @@
 # Infinimedia Default
 
-These are the custom theme assets supplied in the Media checkout. The default main faceplate is `main.ora`, an OpenRaster document with the InfiniMedia palette-cycle XML extension. The build packages this file unchanged. Canvas decodes the ORA directly, scales the complete canvas into the Winamp faceplate, and animates its palette ranges from the embedded metadata. No PNG/IFF breakdown assets are generated or required.
+These are the custom theme assets supplied in the Media checkout. The default main faceplate is `main.ora`, an OpenRaster document whose visible artwork layer is `data/rainbow-logo.iff`; the static shadow/base remains a PNG layer. The build packages this file unchanged. Canvas renders and cycles the IFF layer from its native palette ranges, then composites it over the base and scales the complete canvas into the Winamp faceplate. Animation comes from the IFF palette ranges; the PNG base remains static.
 
 The skin name in theme.json, skininfo.xml and readme.txt is Infinimedia Default. Original artwork authors and copyright remain credited; the archived upstream skin is retained unchanged in test-assets/skins.
 
-`package-default-theme.py` packages these source assets deterministically into `skins/Infini.wsz`. Debug previews and backups are not production assets. The repository-root `infini.svg` remains a separate static artwork source; the default skin's color cycling is carried by the embedded ORA metadata.
+`package-default-theme.py` packages these source assets deterministically into `skins/Infini.wsz`. Debug previews and backups are not production assets. The repository-root `infini.svg` remains a separate static artwork source; the default skin's color cycling comes from the embedded IFF palette.
 
 Image filenames can use any extension handled by linked Canvas decoders. Logical sprite names (main, titlebar, cbuttons, pledit, etc.) are independent of encoding. A `theme.json` images value is a filename or an ordered array of up to four same-size layers. Without a mapping, traditional role.bmp wins; otherwise a matching role in another format is selected deterministically. Unknown/malformed codecs use the existing visual fallback.
 

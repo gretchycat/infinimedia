@@ -4,7 +4,7 @@ This guide documents the player skin and image-rendering integration owned by In
 
 ## Application and library boundaries
 
-* **libinfinicanvas:** `CanvasStreams.decodeBytes` uses content signatures and the existing codec registry for in-memory artwork. It preserves IFF color cycling and renders SVG/SVGZ as still images. Custom SVG cycling metadata is ignored. `BitmapFrame` exposes the bitmap and optional animation controller.
+* **libinfinicanvas:** `CanvasStreams.decodeBytes` uses content signatures and the existing codec registry for in-memory artwork. It animates visible IFF layers in ORA files directly from their native palette ranges and renders SVG/SVGZ as still images. Custom SVG cycling metadata is ignored. `BitmapFrame` exposes the bitmap and optional animation controller.
 * **libinfiniui:** skin archive validation, logical sprite roles, `theme.json` mappings/layers, bitmap caching and lifecycle scheduling. The common `ImageAnimationPlayback` scheduler is now in ui-android; the optional ui-image screen uses the same class through its existing dependency. Media therefore does not need that screen to animate a skin.
 * **Infinimedia:** the custom default artwork and attribution, theme selection, deterministic packaging and the player-specific full visual frame. VIDEO supplies the title; GEN supplies side borders and bottom corners. Scaling uses the player's 275-pixel grid, while the inner media stage retains 16:9 geometry. Title clicks retain collapse behavior.
 
