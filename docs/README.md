@@ -21,3 +21,5 @@ their reusable codec and playback APIs.
 ## Shared ecosystem documentation
 
 - [InfiniForge ecosystem map](ECOSYSTEM.md) — generated overview; synchronized from the organization manifest.
+
+- [Planned playlist ownership migration](TODO.md).
