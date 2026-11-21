@@ -8,6 +8,7 @@ import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
 import com.infinifolder.theme.ThemeColors
+import kotlin.math.max
 
 /**
  * Lightweight, high-performance spectrum analyzer & oscilloscope visualizer.
@@ -38,7 +39,14 @@ class VisualizerView @JvmOverloads constructor(
     var isPlaying: Boolean = false
         set(value) {
             field = value
-            if (value) postInvalidateOnAnimation()
+            if (value || minimumDisplayLevel > 0f) postInvalidateOnAnimation()
+        }
+
+    /** Optional visible floor for a host fallback while a GPU visualizer starts or recovers. */
+    var minimumDisplayLevel: Float = 0f
+        set(value) {
+            field = value.coerceIn(0f, 1f)
+            invalidate()
         }
 
     fun updateData(newBands: FloatArray, newPeaks: FloatArray? = null) {
@@ -65,7 +73,7 @@ class VisualizerView @JvmOverloads constructor(
 
         // Update animation values
         for (i in 0 until barCount) {
-            val targetH = if (isPlaying) barTargets[i] * h else 0f
+            val targetH = max(if (isPlaying) barTargets[i] else 0f, minimumDisplayLevel) * h
             // Smooth interpolation
             barHeights[i] += (targetH - barHeights[i]) * 0.35f
 
@@ -105,7 +113,7 @@ class VisualizerView @JvmOverloads constructor(
             }
         }
 
-        if (isPlaying || barHeights.any { it > 1f }) {
+        if (isPlaying || minimumDisplayLevel > 0f || barHeights.any { it > 1f }) {
             postInvalidateOnAnimation()
         }
     }

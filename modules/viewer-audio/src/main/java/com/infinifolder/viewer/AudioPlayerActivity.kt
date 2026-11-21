@@ -170,8 +170,9 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private lateinit var visualPaneMetadata: LinearLayout
     private lateinit var visualPaneTitleText: TextView
     private lateinit var visualPaneDetailsText: TextView
-    private lateinit var visualPaneFxEditorButton: TextView
+    private lateinit var visualFxEditorOverlayButton: TextView
     private lateinit var visualPaneVisualizerView: VisualizerView
+    private var fxRenderAvailable = false
     private lateinit var visualizerView: VisualizerView
     private lateinit var trackTitleText: TextView
     private lateinit var trackArtistText: TextView
@@ -1138,6 +1139,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private val fullscreenButtonHandler = Handler(Looper.getMainLooper())
     private val hideFullscreenButton = Runnable {
         if (::fullscreenVideoButton.isInitialized) fullscreenVideoButton.visibility = View.GONE
+        if (::visualFxEditorOverlayButton.isInitialized) visualFxEditorOverlayButton.visibility = View.GONE
         fullscreenVideoControls?.visibility = View.GONE
     }
 
@@ -1158,6 +1160,9 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             "Open visual media full screen in landscape"
         }
         fullscreenVideoButton.visibility = View.VISIBLE
+        if (::visualFxEditorOverlayButton.isInitialized) {
+            visualFxEditorOverlayButton.visibility = if (canShowLightningSpectrumEditor()) View.VISIBLE else View.GONE
+        }
         if (isLandscapeVideoFullscreen) {
             fullscreenVideoControls?.visibility = View.VISIBLE
             updateFullscreenPlayPauseControl()
@@ -1176,6 +1181,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         fullscreenButtonHandler.removeCallbacks(hideFullscreenButton)
         fullscreenVideoButton.visibility = View.GONE
+        if (::visualFxEditorOverlayButton.isInitialized) visualFxEditorOverlayButton.visibility = View.GONE
         preFullscreenVisibility = (0 until rootLayout.childCount)
             .map { rootLayout.getChildAt(it) }
             .associateWith { it.visibility }
@@ -1209,6 +1215,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         isLandscapeVideoFullscreen = false
         fullscreenButtonHandler.removeCallbacks(hideFullscreenButton)
         if (::fullscreenVideoButton.isInitialized) fullscreenVideoButton.visibility = View.GONE
+        if (::visualFxEditorOverlayButton.isInitialized) visualFxEditorOverlayButton.visibility = View.GONE
         fullscreenVideoControls = null
         fullscreenPlayPauseControl = null
         fullscreenVideoHost?.let { host ->
@@ -1705,30 +1712,20 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
         visualPaneMetadata.addView(visualPaneDetailsText, LinearLayout.LayoutParams(-2, -2))
-        visualPaneFxEditorButton = TextView(this).apply {
-            text = "EDIT LIGHTNING FX"
-            textSize = 9f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(0xFF79DFFF.toInt())
-            setPadding(0, dp(4), 0, 0)
-            contentDescription = "Edit full-width lightning spectrum visualizer"
-            visibility = View.GONE
-            setOnClickListener { showLightningSpectrumEditor() }
-        }
-        visualPaneMetadata.addView(visualPaneFxEditorButton, LinearLayout.LayoutParams(-2, -2))
         artCard.addView(visualPaneMetadata, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply {
             leftMargin = dp(8)
             bottomMargin = dp(8)
         })
         visualPaneVisualizerView = VisualizerView(this).apply {
-            contentDescription = "Audio spectrum prototype"
+            contentDescription = "Full-width audio spectrum fallback while GPU effects start or recover"
+            minimumDisplayLevel = 0.18f
             isPlaying = false
         }
-        artCard.addView(visualPaneVisualizerView, FrameLayout.LayoutParams(dp(92), dp(42), Gravity.BOTTOM or Gravity.END).apply {
-            rightMargin = dp(8)
-            bottomMargin = dp(8)
+        artCard.addView(visualPaneVisualizerView, FrameLayout.LayoutParams(-1, dp(52), Gravity.BOTTOM).apply {
+            bottomMargin = dp(68)
         })
         fxArtworkView.onRenderAvailabilityChanged = { available ->
+            fxRenderAvailable = available
             val isAudioPane = AudioPlayerService.currentService?.currentTrack?.mediaKind == PlaylistMediaKind.AUDIO && !isShowingAnsiOverlay
             visualPaneVisualizerView.visibility = if (isAudioPane && !available) View.VISIBLE else View.GONE
         }
@@ -1764,6 +1761,27 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         artCard.addView(fullscreenVideoButton, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
             topMargin = dp(10)
             rightMargin = dp(10)
+        })
+
+        visualFxEditorOverlayButton = TextView(this).apply {
+            text = "EDIT FX"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(0xD9000000.toInt())
+                setStroke(dp(1), 0x9979DFFF.toInt())
+            }
+            contentDescription = "Edit lightning spectrum visualization effects"
+            visibility = View.GONE
+            setOnClickListener { showLightningSpectrumEditor() }
+        }
+        artCard.addView(visualFxEditorOverlayButton, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
+            topMargin = dp(10)
+            rightMargin = dp(154)
         })
 
         mainColumn.addView(artCard)
@@ -3797,7 +3815,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         if (track == null) {
             if (::fxArtworkView.isInitialized) fxArtworkView.setSourceBitmap(null)
             if (::visualPaneVisualizerView.isInitialized) visualPaneVisualizerView.visibility = View.GONE
-            if (::visualPaneFxEditorButton.isInitialized) visualPaneFxEditorButton.visibility = View.GONE
+            fxRenderAvailable = false
+            if (::visualFxEditorOverlayButton.isInitialized) visualFxEditorOverlayButton.visibility = View.GONE
             if (::albumArtView.isInitialized) albumArtView.alpha = 1f
             if (::visualPaneMetadata.isInitialized) visualPaneMetadata.alpha = 1f
             return
@@ -3815,6 +3834,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         if (changedVisual) {
             activeVisualTrackKey = visualKey
             if (::fxArtworkView.isInitialized) {
+                fxRenderAvailable = false
                 fxArtworkView.setSourceBitmap(null)
                 val change = fxPipeline.replaceOneRandomStage()
                 fxArtworkView.setGraph(fxPipeline.graph(), resetHistory = true)
@@ -3852,7 +3872,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             PlaylistMediaKind.ANSI -> {
                 fxArtworkView.setSourceBitmap(null)
                 visualPaneVisualizerView.visibility = View.GONE
-                visualPaneFxEditorButton.visibility = View.GONE
+                visualFxEditorOverlayButton.visibility = View.GONE
                 albumArtView.alpha = 1f
                 visualPaneMetadata.alpha = 1f
                 isShowingAnsiOverlay = false
@@ -3873,7 +3893,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             PlaylistMediaKind.IMAGE -> {
                 if (changedVisual) fxArtworkView.setSourceBitmap(null)
                 visualPaneVisualizerView.visibility = View.GONE
-                visualPaneFxEditorButton.visibility = View.GONE
+                visualFxEditorOverlayButton.visibility = View.GONE
                 visualPaneMetadata.alpha = 1f
                 isShowingAnsiOverlay = false
                 ansiTerminalView.setPlaying(false)
@@ -3892,7 +3912,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             PlaylistMediaKind.VIDEO -> {
                 fxArtworkView.setSourceBitmap(null)
                 visualPaneVisualizerView.visibility = View.GONE
-                visualPaneFxEditorButton.visibility = View.GONE
+                visualFxEditorOverlayButton.visibility = View.GONE
                 visualPaneMetadata.alpha = 1f
                 isShowingAnsiOverlay = false
                 ansiTerminalView.setPlaying(false)
@@ -3913,7 +3933,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 if (ansiOverlay != null) {
                     fxArtworkView.setSourceBitmap(null)
                     visualPaneVisualizerView.visibility = View.GONE
-                    visualPaneFxEditorButton.visibility = View.GONE
+                    visualFxEditorOverlayButton.visibility = View.GONE
                     albumArtView.alpha = 1f
                     visualPaneMetadata.alpha = 1f
                     isShowingAnsiOverlay = true
@@ -3925,8 +3945,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                     ansiTerminalView.setPlaying(ansiOverlay.elapsedMs() < ansiOverlay.durationMs)
                     visualPaneDetailsText.text = "ANSI output · ${metadataDetails.ifBlank { track.title }}"
                 } else {
-                    visualPaneVisualizerView.visibility = View.GONE
-                    visualPaneFxEditorButton.visibility = View.VISIBLE
+                    visualPaneVisualizerView.visibility = if (fxRenderAvailable) View.GONE else View.VISIBLE
                     isShowingAnsiOverlay = false
                     ansiTerminalView.setPlaying(false)
                     if (!wasShowingAnsi) {
@@ -4019,6 +4038,9 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         }
         updateDockedPlaylist()
     }
+
+    private fun canShowLightningSpectrumEditor(): Boolean =
+        AudioPlayerService.currentService?.currentTrack?.mediaKind == PlaylistMediaKind.AUDIO && !isShowingAnsiOverlay
 
     private fun showLightningSpectrumEditor() {
         LightningSpectrumEditor(this, fxPipeline.lightningSpectrumStyle()) { style ->

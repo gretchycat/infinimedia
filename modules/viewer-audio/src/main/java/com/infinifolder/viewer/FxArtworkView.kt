@@ -64,8 +64,8 @@ internal class FxArtworkView @JvmOverloads constructor(
     private var session: EglSession? = null // render-thread owned
     private var lastFailure: String? = null
     private var lastFailedGraph: FxGraph? = null // render-thread owned, used to avoid repeating a diagnostic
-    private var lastRenderAvailability: Boolean? = null
-    private var lastRenderDiagnosticKey: String? = null // render-thread owned
+    @Volatile private var lastRenderAvailability: Boolean? = null
+    @Volatile private var lastRenderDiagnosticKey: String? = null
     @Volatile private var audioDiagnosticState = ""
     var onRenderAvailabilityChanged: ((Boolean) -> Unit)? = null
     private var frameIndex = 0L
@@ -89,6 +89,7 @@ internal class FxArtworkView @JvmOverloads constructor(
     fun setGraph(value: FxGraph, resetHistory: Boolean = false) {
         graphFallback = null
         graph = value
+        visibility = if (sourceImage.bitmap != null) VISIBLE else GONE
         if (resetHistory) pendingHistoryReset = FxDiscontinuity.TRACK_CHANGED
         requestFrame()
     }
@@ -98,6 +99,7 @@ internal class FxArtworkView @JvmOverloads constructor(
         sourceImage = SourceImage(bitmap, nextSourceRevision)
         audioDiagnosticState = ""
         DiagnosticLog.record("audio.fx.source", "revision=$nextSourceRevision size=${bitmap?.width ?: 0}x${bitmap?.height ?: 0}")
+        setRenderAvailability(false)
         visibility = if (bitmap == null) GONE else VISIBLE
         requestFrame()
     }
@@ -158,6 +160,8 @@ internal class FxArtworkView @JvmOverloads constructor(
         if (surfaceTexture === surface) surfaceTexture = null
         outputWidth = 0
         outputHeight = 0
+        setRenderAvailability(false)
+        DiagnosticLog.record("audio.fx.surface.destroyed", "SurfaceTexture destroyed")
         cancelScheduledFrame()
         onRenderThreadAndWait { releaseSession() }
         return true
@@ -228,12 +232,28 @@ internal class FxArtworkView @JvmOverloads constructor(
 
     /** All EGL and GLES work below runs only on the renderer thread. */
     private fun renderFrame(): Boolean {
-        val texture = surfaceTexture ?: return false
+        val texture = surfaceTexture ?: run {
+            setRenderAvailability(false)
+            recordRenderStatus("waiting:surface", "audio.fx.render.waiting", "SurfaceTexture is not available")
+            return false
+        }
         val width = outputWidth
         val height = outputHeight
         val source = sourceImage
-        val bitmap = source.bitmap ?: return false
-        if (width <= 0 || height <= 0 || bitmap.isRecycled) return false
+        val bitmap = source.bitmap ?: run {
+            setRenderAvailability(false)
+            recordRenderStatus("waiting:source:${source.revision}", "audio.fx.render.waiting", "No source bitmap for revision=${source.revision}")
+            return false
+        }
+        if (width <= 0 || height <= 0 || bitmap.isRecycled) {
+            setRenderAvailability(false)
+            recordRenderStatus(
+                "waiting:geometry:${source.revision}:$width:$height:${bitmap.isRecycled}",
+                "audio.fx.render.waiting",
+                "Invalid render input source=${bitmap.width}x${bitmap.height} output=${width}x$height recycled=${bitmap.isRecycled}",
+            )
+            return false
+        }
 
         return try {
             var current = session
@@ -309,9 +329,9 @@ internal class FxArtworkView @JvmOverloads constructor(
                         "audio.fx.render.success",
                         "size=${width}x$height graph=${activeGraph.name} nodes=${activeGraph.nodes.joinToString { it.effectId }} fallback=${fallback != null}",
                     )
-                    setRenderAvailability(true)
                     val swapped = EGL14.eglSwapBuffers(current.display, current.windowSurface)
                     check(swapped) { eglFailure("eglSwapBuffers") }
+                    if (sourceImage.revision == source.revision && graph === requestedGraph) setRenderAvailability(true)
                     true
                 }
                 is FxRenderResult.Failure -> {
@@ -327,9 +347,9 @@ internal class FxArtworkView @JvmOverloads constructor(
                                     lastFailedGraph = requestedGraph
                                 }
                                 lastFailure = null
-                                setRenderAvailability(true)
                                 val swapped = EGL14.eglSwapBuffers(current.display, current.windowSurface)
                                 check(swapped) { eglFailure("eglSwapBuffers") }
+                                if (sourceImage.revision == source.revision && graph === requestedGraph) setRenderAvailability(true)
                                 true
                             }
                             is FxRenderResult.Failure -> {
@@ -386,8 +406,10 @@ internal class FxArtworkView @JvmOverloads constructor(
     }
 
     private fun setRenderAvailability(available: Boolean) {
-        if (lastRenderAvailability == available) return
-        lastRenderAvailability = available
+        synchronized(this) {
+            if (lastRenderAvailability == available) return
+            lastRenderAvailability = available
+        }
         DiagnosticLog.record("audio.fx.render.availability", "available=$available")
         post { onRenderAvailabilityChanged?.invoke(available) }
     }

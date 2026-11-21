@@ -9,10 +9,11 @@ reusable effects and graph execution.
 
 - `VisualizerView` remains the segmented 16-band spectrum prototype in the
   player console and classic Winamp modes. In the standard audio-artwork pane,
-  the lower-right prototype is hidden while the full-width InfiniFX lightning
-  spectrum renders. If a randomized image effect fails, the host retries a minimal
-lightning-only libinfinifx graph; the lower-right prototype returns only if that
-recovery render also fails. The original failure is logged as `InfiniMediaFx`.
+  a full-width instance remains visible until an InfiniFX frame successfully
+  swaps to the TextureView surface, and returns if rendering fails. Its quiet
+  baseline stays visible before audio analysis arrives. A randomized graph
+  failure retries a minimal lightning-only libinfinifx graph; diagnostics record
+  the original error, surface readiness, and successful frame swaps.
 - `WinampMainWindowView` can switch among spectrum, oscilloscope, and VU modes.
 - `RealAudioVisualizerBridge` reads decoded PCM through libinfinisound's shared
   analyzer. The views do not decode or analyze audio independently.
@@ -28,9 +29,10 @@ thread. It uploads a caller-owned bitmap to `GL_TEXTURE_2D`, supplies monotonic
 timing and source/destination geometry, and renders into the TextureView surface.
 TextureView participates in normal Android child ordering, so the processed
 artwork can sit between the underlying album-art ImageView and the existing
-title/spectrum overlays. This replaces a SurfaceView configured as a media
+title/spectrum overlays. The spectrum fallback is hidden only after the first
+successful `eglSwapBuffers`. This replaces a SurfaceView configured as a media
 overlay, whose special surface z-order could place it behind ordinary content
-in the host window ([Android SurfaceView documentation](https://developer.android.com/reference/android/view/SurfaceView)). If a randomized effect graph fails, the host retries the lightning generator alone through libinfinifx and logs the original error. The original artwork remains visible underneath the transparent output; the small spectrum prototype is restored only if the lightning-only graph also fails.
+in the host window ([Android SurfaceView documentation](https://developer.android.com/reference/android/view/SurfaceView)). If a randomized effect graph fails, the host retries the lightning generator alone through libinfinifx and logs the original error. The original artwork remains visible underneath the transparent output; the full-width spectrum prototype stays available until a rendered frame has successfully swapped and returns if the lightning-only graph also fails.
 
 `RandomFxPipeline` currently holds two sequential image-effect stages. On each
 changed visual playlist item it chooses one stage at random and replaces it with
@@ -38,14 +40,15 @@ a different available effect ID. Each graph then adds an independent
 `generator:lightning-spectrum` branch and alpha-blends it over the processed
 artwork. Its 16 colored electric bars span the entire output width and use the
 current normalized audio bands; with missing/silent bands, a low autonomous
-baseline remains visible. The options are CRT, LCD, water refraction,
-heat ripple, album-art rotozoom, kaleidoscope, and the independent fire generator
+baseline remains visible. The segmented prototype is also full-width and keeps a
+quiet baseline while acting as the first-frame or error fallback. The options are CRT, LCD, water refraction, heat ripple, album-art rotozoom,
+kaleidoscope, and the independent fire generator
 followed by an explicit alpha blend. This is temporary testing behavior, not a
 selection UI; deliberate user/app selection can later replace this policy while
-retaining the public graph/effect contracts. The lower-left **EDIT LIGHTNING FX**
-control adjusts gain, maximum height, spacing, glow, and idle baseline, applying
-changes to the active graph as the sliders move. The editor starts with a 14%
-autonomous height floor so the bars remain visible with a silent or missing band
+retaining the public graph/effect contracts. Tapping the visual pane reveals
+**EDIT FX** beside the full-screen button for the same four-second overlay
+window. It adjusts gain, maximum height, spacing, glow, and idle baseline,
+applying changes to the active graph as the sliders move. The editor starts with a 14% autonomous height floor so the bars remain visible with a silent or missing band
 snapshot. Renderer status, band levels, and errors are recorded in the app's
 `DiagnosticLog` under `audio.fx.*`. Effect IDs and parameter schemas come from
 libinfinifx.
@@ -96,3 +99,13 @@ attached device, so the lightning appearance, orientation, TextureView
 composition, frame rate, and thermal behavior have **not been verified on an
 Android device**. See [app architecture](architecture.md) and the
 [libinfinifx effect guide](https://github.com/infiniforge/libinfinifx/blob/main/docs/effects.md).
+
+On 2026-11-21, after changing the editor to a tap-revealed overlay and keeping a
+full-width spectrum fallback until a successful EGL buffer swap, the same
+standalone command `./build.sh --no-daemon --max-workers=1 --console=plain`
+completed successfully again and passed all 121 JVM tests. It rebuilt
+`InfiniMedia-debug.apk`. `adb devices -l` still reports no attached device, so
+this build is not visual device acceptance. The supplied prior diagnostic bundle
+contains no `audio.fx.*` render records; the current build records source size,
+surface availability/destruction, skipped render inputs, errors, and successful
+swaps to make the next capture actionable.
