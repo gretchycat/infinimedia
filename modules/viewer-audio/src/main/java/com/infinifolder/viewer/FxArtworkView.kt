@@ -46,6 +46,8 @@ internal class FxArtworkView @JvmOverloads constructor(
     @Volatile private var sourceImage = SourceImage(null, 0L)
     private var nextSourceRevision = 0L
     @Volatile private var graph = FxGraph("neutral-pass-through", emptyList(), emptyList())
+    /** Pair of the requested graph and a lightning-only graph used if a filter graph fails. */
+    @Volatile private var graphFallback: Pair<FxGraph, FxGraph>? = null
     @Volatile private var audio: AudioFrameMetadata? = null
     @Volatile private var resumed = false
     @Volatile private var outputWidth = 0
@@ -60,6 +62,7 @@ internal class FxArtworkView @JvmOverloads constructor(
     private var pendingHistoryReset: FxDiscontinuity? = null
     private var session: EglSession? = null // render-thread owned
     private var lastFailure: String? = null
+    private var lastFailedGraph: FxGraph? = null // render-thread owned, used to avoid repeating a diagnostic
     private var lastRenderAvailability: Boolean? = null
     var onRenderAvailabilityChanged: ((Boolean) -> Unit)? = null
     private var frameIndex = 0L
@@ -81,6 +84,7 @@ internal class FxArtworkView @JvmOverloads constructor(
     }
 
     fun setGraph(value: FxGraph, resetHistory: Boolean = false) {
+        graphFallback = null
         graph = value
         if (resetHistory) pendingHistoryReset = FxDiscontinuity.TRACK_CHANGED
         requestFrame()
@@ -277,7 +281,10 @@ internal class FxArtworkView @JvmOverloads constructor(
                 ),
                 audio = audio?.takeIf { now >= it.timestampNanos && now - it.timestampNanos <= AUDIO_MAX_AGE_NANOS },
             )
-            when (val result = current.engine.render(graph, frame, FxRenderTarget(0, width, height))) {
+            val requestedGraph = graph
+            val fallback = graphFallback?.takeIf { it.first === requestedGraph }?.second
+            val activeGraph = fallback ?: requestedGraph
+            when (val result = current.engine.render(activeGraph, frame, FxRenderTarget(0, width, height))) {
                 is FxRenderResult.Success -> {
                     lastFailure = null
                     setRenderAvailability(true)
@@ -286,9 +293,35 @@ internal class FxArtworkView @JvmOverloads constructor(
                     true
                 }
                 is FxRenderResult.Failure -> {
-                    reportFailure("${result.code}:${result.message}", null)
-                    hideAfterFailure(source.revision)
-                    false
+                    val lightningGraph = if (fallback == null) requestedGraph.lightningOnlyFallback() else null
+                    if (lightningGraph != null) {
+                        when (val fallbackResult = current.engine.render(lightningGraph, frame, FxRenderTarget(0, width, height))) {
+                            is FxRenderResult.Success -> {
+                                graphFallback = requestedGraph to lightningGraph
+                                if (lastFailedGraph !== requestedGraph) {
+                                    Log.e(TAG, "Effect graph failed (${result.code}: ${result.message}); rendering the lightning node alone")
+                                    lastFailedGraph = requestedGraph
+                                }
+                                lastFailure = null
+                                setRenderAvailability(true)
+                                val swapped = EGL14.eglSwapBuffers(current.display, current.windowSurface)
+                                check(swapped) { eglFailure("eglSwapBuffers") }
+                                true
+                            }
+                            is FxRenderResult.Failure -> {
+                                reportFailure(
+                                    "${result.code}:${result.message}; lightning fallback ${fallbackResult.code}:${fallbackResult.message}",
+                                    null,
+                                )
+                                hideAfterFailure(source.revision)
+                                false
+                            }
+                        }
+                    } else {
+                        reportFailure("${result.code}:${result.message}", null)
+                        hideAfterFailure(source.revision)
+                        false
+                    }
                 }
             }
         } catch (error: Throwable) {

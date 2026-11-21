@@ -26,6 +26,15 @@ class FxPipelineTest {
         }
     }
 
+    @Test fun lightningOnlyFallbackIsAValidGeneratorGraphAndKeepsStyle() {
+        val graph = RandomFxPipeline(Random(8)).graph()
+        val fallback = requireNotNull(graph.lightningOnlyFallback())
+        FxGraphValidator.validate(fallback, BuiltinFx.byId)
+        assertEquals("generator:lightning-spectrum", fallback.nodes.single().effectId)
+        assertEquals("lightning_fallback", fallback.outputNodeId)
+        assertEquals(graph.nodes.single { it.id == "lightning_spectrum" }.parameters, fallback.nodes.single().parameters)
+    }
+
     @Test fun lightningSpectrumEditorParametersReachTheGeneratorNode() {
         val pipeline = RandomFxPipeline(Random(4))
         pipeline.updateLightningSpectrumStyle(LightningSpectrumStyle(gain = 3.4f, maxHeight = .72f, barGap = .08f, glow = 1.2f))

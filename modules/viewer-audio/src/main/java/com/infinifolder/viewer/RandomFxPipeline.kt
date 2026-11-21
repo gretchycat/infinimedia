@@ -100,3 +100,15 @@ internal data class LightningSpectrumStyle(
     val glow: Float = .9f,
     val idleHeight: Float = .04f,
 )
+
+
+/** A narrow recovery graph keeps the spectrum available if a randomized image filter fails. */
+internal fun FxGraph.lightningOnlyFallback(): FxGraph? {
+    val lightning = nodes.firstOrNull { it.effectId == "generator:lightning-spectrum" } ?: return null
+    return FxGraph(
+        name = "infinimedia-lightning-fallback",
+        nodes = listOf(lightning.copy(id = "lightning_fallback")),
+        connections = emptyList(),
+        outputNodeId = "lightning_fallback",
+    )
+}

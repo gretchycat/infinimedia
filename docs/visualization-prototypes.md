@@ -10,7 +10,9 @@ reusable effects and graph execution.
 - `VisualizerView` remains the segmented 16-band spectrum prototype in the
   player console and classic Winamp modes. In the standard audio-artwork pane,
   the lower-right prototype is hidden while the full-width InfiniFX lightning
-  spectrum renders; it is restored automatically if the GLES graph fails.
+  spectrum renders. If a randomized image effect fails, the host retries a minimal
+lightning-only libinfinifx graph; the lower-right prototype returns only if that
+recovery render also fails. The original failure is logged as `InfiniMediaFx`.
 - `WinampMainWindowView` can switch among spectrum, oscilloscope, and VU modes.
 - `RealAudioVisualizerBridge` reads decoded PCM through libinfinisound's shared
   analyzer. The views do not decode or analyze audio independently.
@@ -28,7 +30,7 @@ TextureView participates in normal Android child ordering, so the processed
 artwork can sit between the underlying album-art ImageView and the existing
 title/spectrum overlays. This replaces a SurfaceView configured as a media
 overlay, whose special surface z-order could place it behind ordinary content
-in the host window ([Android SurfaceView documentation](https://developer.android.com/reference/android/view/SurfaceView)). If the FX renderer fails, the original artwork remains visible as a fallback.
+in the host window ([Android SurfaceView documentation](https://developer.android.com/reference/android/view/SurfaceView)). If a randomized effect graph fails, the host retries the lightning generator alone through libinfinifx and logs the original error. The original artwork remains visible underneath the transparent output; the small spectrum prototype is restored only if the lightning-only graph also fails.
 
 `RandomFxPipeline` currently holds two sequential image-effect stages. On each
 changed visual playlist item it chooses one stage at random and replaces it with
@@ -75,8 +77,8 @@ On 2026-11-20, after pinning libinfinifx commit
 `dfac7609986107dc9e87229913f7761070f52299`, the standalone Termux command
 `./build.sh --no-daemon --max-workers=1 --console=plain` completed successfully.
 It assembled `InfiniMedia-debug.apk` and passed all 119 JVM unit tests, including
-the three `FxPipelineTest` cases for valid generated graphs, the lightning
-overlay, and editor parameter propagation. The build includes the TextureView/
+the four `FxPipelineTest` cases for valid generated graphs, lightning overlay,
+lightning-only fallback validation, and editor parameter propagation. The build includes the TextureView/
 EGL renderer, lightning generator graph branch, and parameter editor. The pinned
 libinfinisound Termux compatibility update remains at
 `3412205da2501248a0c89f5ab9402049fc89cfd9`.
