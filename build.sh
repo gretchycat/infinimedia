@@ -24,5 +24,5 @@ if [ -n "$INFINI_TARGET_ABI" ]; then
     set -- "-PtargetAbi=$INFINI_TARGET_ABI" "$@"
 fi
 python3 scripts/fetch-dependencies.py
-./gradlew assembleDebug testDebugUnitTest :visualization-engine:test "$@"
+./gradlew assembleDebug testDebugUnitTest "$@"
 copy_debug_apks build/outputs/apk/debug

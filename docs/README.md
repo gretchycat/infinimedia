@@ -6,6 +6,7 @@ playlists, player settings, casting, and media presentation.
 
 - [Application description and implementation status](APPLICATION.md).
 - [Application architecture](architecture.md)
+- [Visualization prototypes and effect-library boundary](visualization-prototypes.md)
 - [Storage and URI integration](storage.md)
 - [Audio and sound formats](audio-formats.md)
 - [Audio processing integration](audio-processing-library.md)

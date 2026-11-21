@@ -17,7 +17,6 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.customview:customview:1.1.0")
     api("androidx.core:core:1.15.0")
-    implementation(project(":visualization-engine"))
     api("io.github.gretchycat.libinfinisound:audio-processing:0.2.0")
     implementation("io.github.gretchycat.libinfiniscribe:scribe-core:0.1.0")
     implementation("io.github.gretchycat.libinfiniselect:select-android:0.1.0")

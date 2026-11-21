@@ -163,7 +163,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private lateinit var visualPaneMetadata: LinearLayout
     private lateinit var visualPaneTitleText: TextView
     private lateinit var visualPaneDetailsText: TextView
-    private lateinit var liveVisualizationView: LiveVisualizationView
+    private lateinit var visualPaneVisualizerView: VisualizerView
     private lateinit var visualizerView: VisualizerView
     private lateinit var trackTitleText: TextView
     private lateinit var trackArtistText: TextView
@@ -252,7 +252,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private var visualVideoPlaying = false
     private var visualVideoWasPlayingBeforePause = false
     private var activeVisualTrackKey: String? = null
-    private var lastVisualizationArtwork: Bitmap? = null
     private val visualLoadGeneration = java.util.concurrent.atomic.AtomicLong()
     private val visualImageAdvanceHandler = Handler(Looper.getMainLooper())
     private val visualImageAdvanceRunnable = object : Runnable {
@@ -354,7 +353,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     override fun onResume() {
         super.onResume()
-        if (::liveVisualizationView.isInitialized) liveVisualizationView.onHostResume()
         updateSystemBarsForOrientation()
         isPlayerResumed = true
         skinAnimationHost?.close()
@@ -398,11 +396,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         AudioPlayerService.currentService?.prioritizeMetadataTracks(emptyList())
         stopProgressFrames()
         visualizerBridge?.detach()
-        if (::liveVisualizationView.isInitialized) {
-            liveVisualizationView.setPlaybackActive(false)
-            liveVisualizationView.onHostPause()
-        }
         if (::visualizerView.isInitialized) visualizerView.updateData(FloatArray(16))
+        if (::visualPaneVisualizerView.isInitialized) visualPaneVisualizerView.updateData(FloatArray(16))
         super.onPause()
     }
 
@@ -411,8 +406,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val source = service?.analysisSource
         if (!isPlayerResumed || (!CastManager.isCasting && sessionId <= 0) || source == null) {
             visualizerBridge?.detach()
-            if (::liveVisualizationView.isInitialized) liveVisualizationView.setPlaybackActive(false)
             if (::visualizerView.isInitialized) visualizerView.updateData(FloatArray(16))
+            if (::visualPaneVisualizerView.isInitialized) visualPaneVisualizerView.updateData(FloatArray(16))
             return
         }
         visualizerBridge?.attach(source) {
@@ -1663,15 +1658,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         }
         artCard.addView(albumArtView)
 
-        liveVisualizationView = LiveVisualizationView(this).apply {
-            visibility = View.GONE
-            layoutParams = FrameLayout.LayoutParams(-1, -1)
-            setOnClickListener { showFullscreenVideoButton() }
-        }
-        artCard.addView(liveVisualizationView)
-
-        // The lower-third background hugs its text; the spectrum now drives the
-        // full-width fire simulation rather than painting a separate graph.
+        // The lower-third background hugs its text; the spectrum remains a
+        // separate prototype overlay.
         visualPaneMetadata = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1703,12 +1691,14 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             leftMargin = dp(8)
             bottomMargin = dp(8)
         })
-        liveVisualizationView.onArtworkOpacityChanged = { opacity ->
-            if (!isDestroyed) {
-                albumArtView.alpha = if (liveVisualizationView.drawsArtwork) 0f else opacity
-                visualPaneMetadata.alpha = opacity
-            }
+        visualPaneVisualizerView = VisualizerView(this).apply {
+            contentDescription = "Audio spectrum prototype"
+            isPlaying = false
         }
+        artCard.addView(visualPaneVisualizerView, FrameLayout.LayoutParams(dp(92), dp(42), Gravity.BOTTOM or Gravity.END).apply {
+            rightMargin = dp(8)
+            bottomMargin = dp(8)
+        })
         artCard.addOnLayoutChangeListener { _, left, _, right, _, _, _, _, _ ->
             val textMax = ((right - left) * 0.72f).toInt().coerceAtLeast(dp(80))
             visualPaneTitleText.maxWidth = textMax
@@ -1977,18 +1967,14 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         // One capture bridge serves the normal visual pane and optional classic skins.
         // It used to be created only by the Winamp setup path, which left the standard
         // player's visible spectrum with no PCM source attached.
-        visualizerBridge = RealAudioVisualizerBridge(
-            onUpdate = {
-                val playing = if (CastManager.isCasting) CastManager.isRemotePlaying
-                    else AudioPlayerService.currentService?.isPlaying == true
-                visualizerBridge?.getSpectrum(visualizerBands, isPlaying = playing)
-                if (::visualizerView.isInitialized) visualizerView.updateData(visualizerBands)
-                if (::winampMainWindowView.isInitialized) winampMainWindowView.invalidate()
-            },
-            onFeatures = { frame ->
-                if (::liveVisualizationView.isInitialized) liveVisualizationView.submitAudioFeatures(frame)
-            },
-        )
+        visualizerBridge = RealAudioVisualizerBridge {
+            val playing = if (CastManager.isCasting) CastManager.isRemotePlaying
+                else AudioPlayerService.currentService?.isPlaying == true
+            visualizerBridge?.getSpectrum(visualizerBands, isPlaying = playing)
+            if (::visualizerView.isInitialized) visualizerView.updateData(visualizerBands)
+            if (::visualPaneVisualizerView.isInitialized) visualPaneVisualizerView.updateData(visualizerBands)
+            if (::winampMainWindowView.isInitialized) winampMainWindowView.invalidate()
+        }
         if (::winampMainWindowView.isInitialized) winampMainWindowView.visualizerBridge = visualizerBridge
     }
 
@@ -2930,24 +2916,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         }.start()
     }
 
-    private fun crossfadeFromAnsiToLiveArtwork() {
-        val duration = PlaylistVisualTiming.IMAGE_CROSSFADE_DURATION_MS
-        liveVisualizationView.animate().cancel()
-        liveVisualizationView.alpha = 0f
-        liveVisualizationView.visibility = View.VISIBLE
-        ansiTerminalView.animate().cancel()
-        ansiTerminalView.alpha = 1f
-        ansiTerminalView.visibility = View.VISIBLE
-        liveVisualizationView.animate().alpha(1f).setDuration(duration).start()
-        ansiTerminalView.animate().alpha(0f).setDuration(duration).withEndAction {
-            if (!isShowingAnsiOverlay) {
-                ansiTerminalView.visibility = View.GONE
-                ansiTerminalView.alpha = 1f
-                ansiTerminalView.setDocument(null)
-            }
-        }.start()
-    }
-
     private fun startVisualImageAnimation(uri: Uri, bitmap: Bitmap) {
         stopVisualImageAnimation()
         val animation = visualBitmapAnimationCache[uri.toString()] ?: return
@@ -3250,6 +3218,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         // Visualizer styling
         visualizerView.applyTheme(theme)
         visualizerView.visibility = View.VISIBLE
+        visualPaneVisualizerView.applyTheme(theme)
 
         // Seekbar thumb
         val seekThumb = if (isWinamp) ThemeManager.createSeekThumbDrawable() else null
@@ -3760,12 +3729,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private fun updateTrackView(track: AudioTrack?) {
         if (track == null) {
-            if (::liveVisualizationView.isInitialized) {
-                liveVisualizationView.visibility = View.GONE
-                liveVisualizationView.setPlaybackActive(false)
-                liveVisualizationView.hardReset()
-                lastVisualizationArtwork = null
-            }
+            if (::visualPaneVisualizerView.isInitialized) visualPaneVisualizerView.visibility = View.GONE
             if (::albumArtView.isInitialized) albumArtView.alpha = 1f
             if (::visualPaneMetadata.isInitialized) visualPaneMetadata.alpha = 1f
             return
@@ -3788,10 +3752,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             (albumArtView.drawable as? android.graphics.drawable.Animatable)?.stop()
             stopVisualImageAnimation()
             stopVisualVideo()
-            liveVisualizationView.animate().cancel()
-            liveVisualizationView.alpha = 1f
-            liveVisualizationView.visibility = View.GONE
-            liveVisualizationView.setPlaybackActive(false)
             albumArtView.alpha = 1f
             visualPaneMetadata.alpha = 1f
         }
@@ -3816,9 +3776,9 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val generation = visualLoadGeneration.get()
         when (track.mediaKind) {
             PlaylistMediaKind.ANSI -> {
+                visualPaneVisualizerView.visibility = View.GONE
                 albumArtView.alpha = 1f
                 visualPaneMetadata.alpha = 1f
-                liveVisualizationView.visibility = View.GONE
                 isShowingAnsiOverlay = false
                 albumArtView.visibility = View.GONE
                 ansiTerminalView.visibility = View.VISIBLE
@@ -3835,8 +3795,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 }
             }
             PlaylistMediaKind.IMAGE -> {
+                visualPaneVisualizerView.visibility = View.GONE
                 visualPaneMetadata.alpha = 1f
-                liveVisualizationView.visibility = View.GONE
                 isShowingAnsiOverlay = false
                 ansiTerminalView.setPlaying(false)
                 if (!wasShowingAnsi) {
@@ -3852,8 +3812,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 if (changedVisual) loadPlaylistImage(track, generation)
             }
             PlaylistMediaKind.VIDEO -> {
+                visualPaneVisualizerView.visibility = View.GONE
                 visualPaneMetadata.alpha = 1f
-                liveVisualizationView.visibility = View.GONE
                 isShowingAnsiOverlay = false
                 ansiTerminalView.setPlaying(false)
                 if (!wasShowingAnsi) {
@@ -3868,19 +3828,12 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             }
             PlaylistMediaKind.AUDIO -> {
                 val audioArtwork = track.artwork ?: track.directoryArtwork
-                if (changedVisual || lastVisualizationArtwork !== audioArtwork) {
-                    liveVisualizationView.seedFromArtwork(audioArtwork)
-                    lastVisualizationArtwork = audioArtwork
-                    albumArtView.alpha = 1f
-                    visualPaneMetadata.alpha = 1f
-                }
                 visualPaneMetadata.visibility = View.VISIBLE
                 visualPaneDetailsText.text = metadataDetails
                 if (ansiOverlay != null) {
+                    visualPaneVisualizerView.visibility = View.GONE
                     albumArtView.alpha = 1f
                     visualPaneMetadata.alpha = 1f
-                    liveVisualizationView.visibility = View.GONE
-                    liveVisualizationView.setPlaybackActive(false)
                     isShowingAnsiOverlay = true
                     albumArtView.visibility = View.GONE
                     ansiTerminalView.visibility = View.VISIBLE
@@ -3890,17 +3843,14 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                     ansiTerminalView.setPlaying(ansiOverlay.elapsedMs() < ansiOverlay.durationMs)
                     visualPaneDetailsText.text = "ANSI output · ${metadataDetails.ifBlank { track.title }}"
                 } else {
-                    liveVisualizationView.visibility = View.VISIBLE
-                    liveVisualizationView.setPlaybackActive(
-                        isPlayerResumed && (if (CastManager.isCasting) CastManager.isRemotePlaying else service?.isPlaying == true),
-                    )
+                    visualPaneVisualizerView.visibility = View.VISIBLE
                     isShowingAnsiOverlay = false
                     ansiTerminalView.setPlaying(false)
                     if (!wasShowingAnsi) {
                         ansiTerminalView.visibility = View.GONE
                         ansiTerminalView.setDocument(null)
                     }
-                    albumArtView.visibility = if (audioArtwork != null) View.GONE else View.VISIBLE
+                    albumArtView.visibility = View.VISIBLE
                     val artDrawable = activeArtwork?.let { BitmapDrawable(resources, it).apply { isFilterBitmap = true } }
                         ?: getDrawable(android.R.drawable.ic_media_play)
                     if (activeArtwork != null) {
@@ -3908,9 +3858,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                     } else {
                         albumArtView.setBackgroundColor(ThemeManager.getAudioPlayerTheme(this).alternateBackground)
                     }
-                    if (wasShowingAnsi && audioArtwork != null) crossfadeFromAnsiToLiveArtwork()
-                    else if (wasShowingAnsi) crossfadeFromAnsiToAlbumArt(artDrawable)
-                    else if (audioArtwork == null && (changedVisual || albumArtView.drawable == null)) showPlaylistImageDrawable(artDrawable)
+                    if (wasShowingAnsi) crossfadeFromAnsiToAlbumArt(artDrawable)
+                    else if (changedVisual || albumArtView.drawable == null || audioArtwork != null) showPlaylistImageDrawable(artDrawable)
                 }
             }
         }
@@ -4730,11 +4679,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             updatePlayPauseButton(effectivePlaying)
             loadingIndicator.visibility = if (isLoading) View.VISIBLE else View.GONE
             visualizerView.isPlaying = effectivePlaying
-            liveVisualizationView.setPlaybackActive(
-                isPlayerResumed && effectivePlaying &&
-                    AudioPlayerService.currentService?.currentTrack?.mediaKind == PlaylistMediaKind.AUDIO &&
-                    liveVisualizationView.visibility == View.VISIBLE,
-            )
+            visualPaneVisualizerView.isPlaying = effectivePlaying
             if (::winampMainWindowView.isInitialized) {
                 winampMainWindowView.isPlaying = effectivePlaying
                 winampMainWindowView.isPaused = (!effectivePlaying && ((AudioPlayerService.currentService?.currentPosition ?: 0) > 0 || CastManager.isCasting))
@@ -4786,6 +4731,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         runOnUiThread {
             updatePlayPauseButton(false)
             visualizerView.isPlaying = false
+            if (::visualPaneVisualizerView.isInitialized) visualPaneVisualizerView.isPlaying = false
             progressBar.progress = 1000
             currentTimeText.text = totalTimeText.text
             if (::timerLedView.isInitialized) {
@@ -4898,6 +4844,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                     winampMainWindowView.isPlaying = isPlaying
                 }
                 visualizerView.isPlaying = isPlaying
+                visualPaneVisualizerView.isPlaying = isPlaying
             }
         }
     }
@@ -4925,7 +4872,6 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         visualVideoPlayback?.close()
         visualVideoInput = null
         visualVideoPlayback = null
-        if (::liveVisualizationView.isInitialized) liveVisualizationView.close()
         directoryCoverExecutor.shutdownNow()
         pendingDirectoryCovers.clear()
         failedDirectoryCovers.clear()

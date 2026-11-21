@@ -5,15 +5,12 @@ import android.os.Looper
 import com.infinifolder.audio.analysis.AudioSignalAnalysis
 import com.infinifolder.audio.AudioAnalysisSession
 import com.infinifolder.audio.AudioProcessing
-import com.infinimedia.visualization.AudioFeatureFrame
-import com.infinimedia.visualization.MusicalFeatureTracker
 import kotlin.math.max
 import kotlin.math.min
 
 /** Receives decoded playback PCM and exposes measurements to the visualizer views. */
 class RealAudioVisualizerBridge(
-    private val onUpdate: (() -> Unit)? = null,
-    private val onFeatures: ((AudioFeatureFrame) -> Unit)? = null,
+    private val onUpdate: (() -> Unit)? = null
 ) {
     private var analyzer: AudioAnalysisSession? = null
     private var sourceId: Long = -1
@@ -28,14 +25,10 @@ class RealAudioVisualizerBridge(
     private val peakFallSpeed = FloatArray(bandCount)
 
     private val waveformPoints = FloatArray(128)
-    private val featureTracker = MusicalFeatureTracker(bandCount)
-    private var lastFeatureLogPositionMs = Long.MIN_VALUE
     private var vuLeft: Float = 0f
     private var vuRight: Float = 0f
     private var peakVuLeft: Float = 0f
     private var peakVuRight: Float = 0f
-    @Volatile var latestFeatureFrame: AudioFeatureFrame = AudioFeatureFrame.SILENCE
-        private set
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val updateRunnable = Runnable {
@@ -60,45 +53,6 @@ class RealAudioVisualizerBridge(
                 vuRight = (levels.right.rms * 1.8f).coerceIn(0f, 1f)
                 peakVuLeft = max(levels.left.peak, peakVuLeft - 0.03f).coerceIn(0f, 1f)
                 peakVuRight = max(levels.right.peak, peakVuRight - 0.03f).coerceIn(0f, 1f)
-                val (playing, positionMs) = playback()
-                val rms = (levels.left.rms + levels.right.rms) * 0.5f
-                val peak = max(levels.left.peak, levels.right.peak)
-                val music = featureTracker.update(positionMs, playing, rawBands)
-                val frame = AudioFeatureFrame(
-                    sourceId = source.id,
-                    presentationTimeMs = positionMs.coerceAtLeast(0L),
-                    playing = playing,
-                    rms = rms,
-                    peak = peak,
-                    bands = rawBands.copyOf(),
-                    spectralFlux = music.spectralFlux,
-                    transient = music.transient,
-                    kickHit = music.kickHit,
-                    snareHit = music.snareHit,
-                    cymbalHit = music.cymbalHit,
-                    beatPulse = music.beatPulse,
-                    beatStrength = music.beatStrength,
-                    tempoBpm = music.tempoBpm,
-                    tempoConfidence = music.tempoConfidence,
-                    spectralCentroidHz = levels.spectralCentroidHz,
-                    stereoWidth = levels.stereoWidth,
-                    stereoBalance = levels.stereoBalance,
-                    zeroCrossingRate = levels.zeroCrossingRate,
-                )
-                latestFeatureFrame = frame
-                if (playing && (lastFeatureLogPositionMs == Long.MIN_VALUE || positionMs - lastFeatureLogPositionMs >= 10_000L)) {
-                    lastFeatureLogPositionMs = positionMs
-                    val activeBands = rawBands.count { it > 0.05f }
-                    com.infinifolder.storage.DiagnosticLog.record(
-                        "audio.visualizer.features",
-                        "positionMs=$positionMs rms=${"%.3f".format(rms)} peak=${"%.3f".format(peak)} " +
-                            "bands=${rawBands.minOrNull()?.let { "%.2f".format(it) } ?: "0"}..${rawBands.maxOrNull()?.let { "%.2f".format(it) } ?: "0"} active=$activeBands/16 " +
-                            "flux=${"%.3f".format(music.spectralFlux)} kick=${music.kickHit} snare=${music.snareHit} cymbal=${music.cymbalHit} " +
-                            "beat=${music.beatPulse} bpm=${"%.1f".format(music.tempoBpm)} confidence=${"%.2f".format(music.tempoConfidence)} " +
-                            "centroidHz=${levels.spectralCentroidHz.toInt()} width=${"%.2f".format(levels.stereoWidth)} zcr=${"%.3f".format(levels.zeroCrossingRate)}",
-                    )
-                }
-                onFeatures?.invoke(frame)
                 mainHandler.removeCallbacks(updateRunnable)
                 mainHandler.post(updateRunnable)
             }
@@ -122,12 +76,9 @@ class RealAudioVisualizerBridge(
     @Synchronized
     fun reset() {
         rawBands.fill(0f); smoothBands.fill(0f); peakBands.fill(0f); peakFallSpeed.fill(0f)
-        featureTracker.reset()
-        lastFeatureLogPositionMs = Long.MIN_VALUE
         waveformPoints.fill(0f)
         vuLeft = 0f; vuRight = 0f; peakVuLeft = 0f; peakVuRight = 0f
         hasStereoVu = false
-        latestFeatureFrame = AudioFeatureFrame.SILENCE
     }
 
     /**

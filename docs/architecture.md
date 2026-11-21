@@ -1,9 +1,8 @@
 # InfiniMedia architecture
 
 InfiniMedia is an independent Android media player. Its own Gradle root owns the
-application, audio and video viewer modules, and the pure Kotlin visualization
-engine. It does not include Infinifolder or Infiniscribe as Gradle projects and
-does not import their application source.
+application and audio and video viewer modules. It does not include Infinifolder
+or Infiniscribe as Gradle projects and does not import their application source.
 
 ## Application ownership
 
@@ -14,8 +13,10 @@ does not import their application source.
   Android output.
 - `modules/viewer-video` owns video playback controls, lifecycle, and media
   source leases while using the public `libinfinivideo` API for playback.
-- `modules/visualization-engine` owns the portable visualization simulation and
-  its effect contracts.
+- `modules/viewer-audio` keeps the PCM-driven spectrum, oscilloscope, and VU
+  presentation prototypes alongside image, video, and ANSI presentation.
+- The independent `libinfinifx` repository is not currently a dependency of this
+  app; reusable GPU effects can be integrated in a separate milestone.
 - `libinfinisound`, `libinfinivideo`, `libinfiniselect`, and `libinfiniui` own
   reusable APIs and adapters in their respective repositories.
 

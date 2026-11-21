@@ -20,7 +20,7 @@ import kotlin.math.min
  * Authentic pixel-perfect Winamp 2.x Main Window view.
  * Native dimension is 275 x 116 pixels, dynamically scaled to the screen width.
  * Places all original Winamp faceplate elements, sprites, and controls at their exact coordinates.
- * Connected to live audio visualizer data with zero fake random animations.
+ * Draws the current PCM-driven spectrum, oscilloscope, and VU prototypes.
  */
 class WinampMainWindowView @JvmOverloads constructor(
     context: Context,
