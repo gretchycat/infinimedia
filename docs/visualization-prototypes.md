@@ -20,10 +20,14 @@ reusable effects and graph execution.
 
 `modules/viewer-audio` pins libinfinifx through `dependencies.lock.json` and
 includes its source checkout as a standalone Gradle composite build. The
-app-owned `FxArtworkView` creates `GlesFxEngine` on a GLES 3 render thread,
-uploads a caller-owned bitmap to `GL_TEXTURE_2D`, supplies monotonic timing and
-source/destination geometry, and renders into a transparent output surface. The
-original artwork remains underneath as a fallback if the FX renderer fails.
+app-owned `FxArtworkView` is a `TextureView` with a private EGL/GLES 3 render
+thread. It uploads a caller-owned bitmap to `GL_TEXTURE_2D`, supplies monotonic
+timing and source/destination geometry, and renders into the TextureView surface.
+TextureView participates in normal Android child ordering, so the processed
+artwork can sit between the underlying album-art ImageView and the existing
+title/spectrum overlays. This replaces a SurfaceView configured as a media
+overlay, whose special surface z-order could place it behind ordinary content
+in the host window ([Android SurfaceView documentation](https://developer.android.com/reference/android/view/SurfaceView)). If the FX renderer fails, the original artwork remains visible as a fallback.
 
 `RandomFxPipeline` currently holds two sequential effect stages. On each
 changed visual playlist item it chooses one stage at random and replaces it with
@@ -60,14 +64,14 @@ not maintain shared effect simulation state.
 
 ## Verification status
 
-On 2026-11-20, the standalone Termux build passed with
-`ANDROID_HOME="$HOME/android-sdk" ./build.sh --no-daemon --max-workers=1 --console=plain`.
+On 2026-11-20, the standalone Termux command
+`./build.sh --no-daemon --max-workers=1 --console=plain` completed successfully.
 It assembled the debug APK and passed all 118 JVM unit tests, including both
-`FxPipelineTest` cases. The blocking native version guard was fixed by updating
-the pinned Termux inputs to installed libopenmpt 0.8.10 and libc++ 30 in
-libinfinisound commit `3412205da2501248a0c89f5ab9402049fc89cfd9`, and pinning
-that commit in this app. This verifies compilation and JVM behavior only; no
-Android device visual or performance acceptance has been run. Shader/runtime
-appearance and transparent surface composition still need GLES device
-verification. See [app architecture](architecture.md) and the
+`FxPipelineTest` cases. This run includes the TextureView/EGL renderer change.
+The blocking native version guard was fixed by updating the pinned Termux inputs
+to installed libopenmpt 0.8.10 and libc++ 30 in libinfinisound commit
+`3412205da2501248a0c89f5ab9402049fc89cfd9`, and pinning that commit in this app.
+This verifies compilation and JVM behavior only; no Android device visual or
+performance acceptance has been run. Shader appearance, image orientation, and
+TextureView composition still need GLES device verification. See [app architecture](architecture.md) and the
 [libinfinifx effect guide](https://github.com/infiniforge/libinfinifx/blob/main/docs/effects.md).

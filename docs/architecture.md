@@ -15,8 +15,10 @@ or Infiniscribe as Gradle projects and does not import their application source.
   source leases while using the public `libinfinivideo` API for playback.
 - `modules/viewer-audio` keeps the PCM-driven spectrum, oscilloscope, and VU
   prototypes and hosts a `libinfinifx` graph over audio artwork/static images.
-  Its `FxArtworkView` owns GLES surface/texture lifecycle; `RandomFxPipeline`
-  temporarily replaces one of two effect stages randomly per changed visual item.
+  Its TextureView-backed `FxArtworkView` owns an EGL/GLES render thread and bitmap
+  texture lifecycle, preserving normal Android child-view composition.
+  `RandomFxPipeline` temporarily replaces one of two effect stages randomly per
+  changed visual item.
 - `libinfinifx` owns the public graph/effect API, GLES executor, shaders, and
   per-node state. Its Infinimedia adapter is app-owned and does not import this app.
 - `libinfinisound`, `libinfinivideo`, `libinfiniselect`, and `libinfiniui` own
