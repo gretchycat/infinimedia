@@ -205,3 +205,17 @@ Implementation f3d7bea passed this repository's build.sh in the independent user
 ## Authoring-thumbnail verification follow-up
 
 The updated Canvas/Core/UI pins fix ORA/KRA authoring identity, large SVGZ classification and PostScript thumbnail aliases. Implementation aea7644 passed the independent build.sh with 80 unit tests and 11 environment cases; all three skin packaging checks passed. The Android probe passed 16 groups, or 17 with `--image-fixtures /path/to/filesystem-test-images/images` to include the original SVGZ. The real EPS/ORA/KRA and original SVGZ outputs were visually checked. Tested APK SHA-256: `468ce8fb555a1b114247b179b8b94e6f5656e04e879adb1da152654f3dcb43f8`. The fixture option changes test tooling only. No storage implementation or image-viewer screen dependency was added.
+
+
+## Infinifx build checkpoint (2026-11-20)
+
+The two-stage libinfinifx artwork pipeline and pinned native dependency update
+passed the standalone Termux build:
+
+```sh
+ANDROID_HOME="$HOME/android-sdk" ./build.sh --no-daemon --max-workers=1 --console=plain
+```
+
+The debug APK assembled and all 118 JVM unit tests passed, including the two
+random-pipeline and audio-metadata adapter checks. This is not device visual or
+GLES performance acceptance; see [visualization integration status](docs/visualization-prototypes.md).

@@ -60,14 +60,14 @@ not maintain shared effect simulation state.
 
 ## Verification status
 
-The app's `:viewer-audio:compileDebugKotlin` and
-`:viewer-audio:compileDebugUnitTestKotlin` tasks passed in the local Termux
-checkout with `-Dandroid.home="$HOME/android-sdk"` and the three unrelated
-libinfinisound native build tasks excluded. The full standalone build is blocked
-by the installed libopenmpt 0.8.10 versus the dependency manifest's expected
-0.8.9. The unit-test task did not produce a test report in this environment, so
-the new JVM tests are compile-checked but not reported as executed. No Android
-device visual or performance acceptance has been run; shader/runtime behavior
-and transparent surface composition still need GLES device verification. See
-[app architecture](architecture.md) and the
+On 2026-11-20, the standalone Termux build passed with
+`ANDROID_HOME="$HOME/android-sdk" ./build.sh --no-daemon --max-workers=1 --console=plain`.
+It assembled the debug APK and passed all 118 JVM unit tests, including both
+`FxPipelineTest` cases. The blocking native version guard was fixed by updating
+the pinned Termux inputs to installed libopenmpt 0.8.10 and libc++ 30 in
+libinfinisound commit `3412205da2501248a0c89f5ab9402049fc89cfd9`, and pinning
+that commit in this app. This verifies compilation and JVM behavior only; no
+Android device visual or performance acceptance has been run. Shader/runtime
+appearance and transparent surface composition still need GLES device
+verification. See [app architecture](architecture.md) and the
 [libinfinifx effect guide](https://github.com/infiniforge/libinfinifx/blob/main/docs/effects.md).
