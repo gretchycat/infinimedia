@@ -15,6 +15,7 @@ import android.os.HandlerThread
 import android.util.AttributeSet
 import android.util.Log
 import android.view.TextureView
+import com.infinifolder.storage.DiagnosticLog
 import org.infiniforge.fx.api.AudioFrameMetadata
 import org.infiniforge.fx.api.FxAlphaMode
 import org.infiniforge.fx.api.FxColorEncoding
@@ -64,6 +65,8 @@ internal class FxArtworkView @JvmOverloads constructor(
     private var lastFailure: String? = null
     private var lastFailedGraph: FxGraph? = null // render-thread owned, used to avoid repeating a diagnostic
     private var lastRenderAvailability: Boolean? = null
+    private var lastRenderDiagnosticKey: String? = null // render-thread owned
+    @Volatile private var audioDiagnosticState = ""
     var onRenderAvailabilityChanged: ((Boolean) -> Unit)? = null
     private var frameIndex = 0L
     private var lastFrameNanos = 0L
@@ -93,12 +96,25 @@ internal class FxArtworkView @JvmOverloads constructor(
     fun setSourceBitmap(bitmap: Bitmap?) {
         nextSourceRevision++
         sourceImage = SourceImage(bitmap, nextSourceRevision)
+        audioDiagnosticState = ""
+        DiagnosticLog.record("audio.fx.source", "revision=$nextSourceRevision size=${bitmap?.width ?: 0}x${bitmap?.height ?: 0}")
         visibility = if (bitmap == null) GONE else VISIBLE
         requestFrame()
     }
 
     fun setAudioMetadata(value: AudioFrameMetadata?) {
         audio = value
+        if (value != null) {
+            val bands = value.bands
+            val state = if ((bands.maxOrNull() ?: 0f) > 0.005f) "active" else "silent"
+            if (audioDiagnosticState != state) {
+                audioDiagnosticState = state
+                DiagnosticLog.record(
+                    "audio.fx.metadata.$state",
+                    "revision=${sourceImage.revision} bands=${bands.size} maxBand=${bands.maxOrNull() ?: 0f} rms=${value.rms}",
+                )
+            }
+        }
         requestFrame()
     }
 
@@ -123,6 +139,7 @@ internal class FxArtworkView @JvmOverloads constructor(
     }
 
     override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+        DiagnosticLog.record("audio.fx.surface.available", "size=${width}x$height")
         surfaceTexture = surface
         outputWidth = width
         outputHeight = height
@@ -287,6 +304,11 @@ internal class FxArtworkView @JvmOverloads constructor(
             when (val result = current.engine.render(activeGraph, frame, FxRenderTarget(0, width, height))) {
                 is FxRenderResult.Success -> {
                     lastFailure = null
+                    recordRenderStatus(
+                        "success:${source.revision}:${activeGraph.name}",
+                        "audio.fx.render.success",
+                        "size=${width}x$height graph=${activeGraph.name} nodes=${activeGraph.nodes.joinToString { it.effectId }} fallback=${fallback != null}",
+                    )
                     setRenderAvailability(true)
                     val swapped = EGL14.eglSwapBuffers(current.display, current.windowSurface)
                     check(swapped) { eglFailure("eglSwapBuffers") }
@@ -299,7 +321,9 @@ internal class FxArtworkView @JvmOverloads constructor(
                             is FxRenderResult.Success -> {
                                 graphFallback = requestedGraph to lightningGraph
                                 if (lastFailedGraph !== requestedGraph) {
-                                    Log.e(TAG, "Effect graph failed (${result.code}: ${result.message}); rendering the lightning node alone")
+                                    val detail = "graph=${requestedGraph.name} error=${result.code}:${result.message}"
+                                    Log.e(TAG, "Effect graph failed ($detail); rendering the lightning node alone")
+                                    DiagnosticLog.record("audio.fx.render.lightning-fallback", detail)
                                     lastFailedGraph = requestedGraph
                                 }
                                 lastFailure = null
@@ -352,11 +376,19 @@ internal class FxArtworkView @JvmOverloads constructor(
         if (lastFailure == key) return
         lastFailure = key
         Log.e(TAG, "Infinifx renderer: $key", error)
+        DiagnosticLog.record("audio.fx.render.failed", key, error)
+    }
+
+    private fun recordRenderStatus(key: String, event: String, detail: String) {
+        if (lastRenderDiagnosticKey == key) return
+        lastRenderDiagnosticKey = key
+        DiagnosticLog.record(event, detail)
     }
 
     private fun setRenderAvailability(available: Boolean) {
         if (lastRenderAvailability == available) return
         lastRenderAvailability = available
+        DiagnosticLog.record("audio.fx.render.availability", "available=$available")
         post { onRenderAvailabilityChanged?.invoke(available) }
     }
 

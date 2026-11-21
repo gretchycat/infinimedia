@@ -26,6 +26,12 @@ class FxPipelineTest {
         }
     }
 
+    @Test fun lightningSpectrumStartsWithAVisibleIdleBaseline() {
+        val pipeline = RandomFxPipeline(Random(9))
+        val node = pipeline.graph().nodes.single { it.id == "lightning_spectrum" }
+        assertEquals(.14f, (node.parameters.getValue("idleHeight") as org.infiniforge.fx.api.FxParameterValue.FloatValue).value)
+    }
+
     @Test fun lightningOnlyFallbackIsAValidGeneratorGraphAndKeepsStyle() {
         val graph = RandomFxPipeline(Random(8)).graph()
         val fallback = requireNotNull(graph.lightningOnlyFallback())

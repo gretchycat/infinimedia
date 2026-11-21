@@ -44,8 +44,11 @@ followed by an explicit alpha blend. This is temporary testing behavior, not a
 selection UI; deliberate user/app selection can later replace this policy while
 retaining the public graph/effect contracts. The lower-left **EDIT LIGHTNING FX**
 control adjusts gain, maximum height, spacing, glow, and idle baseline, applying
-changes to the active graph as the sliders move. Effect IDs and parameter schemas
-come from libinfinifx.
+changes to the active graph as the sliders move. The editor starts with a 14%
+autonomous height floor so the bars remain visible with a silent or missing band
+snapshot. Renderer status, band levels, and errors are recorded in the app's
+`DiagnosticLog` under `audio.fx.*`. Effect IDs and parameter schemas come from
+libinfinifx.
 
 The host maps the existing smoothed 16 spectrum bands to normalized low/mid/high
 energy and uses the existing VU RMS/peak values. It does not decode audio again
@@ -74,12 +77,14 @@ not maintain shared effect simulation state.
 ## Verification status
 
 On 2026-11-20, after pinning libinfinifx commit
-`dfac7609986107dc9e87229913f7761070f52299`, the standalone Termux command
+`7bc9ae8b115ba54b469c765bd5d34f77deb46f5c`, the standalone Termux command
 `./build.sh --no-daemon --max-workers=1 --console=plain` completed successfully.
-It assembled `InfiniMedia-debug.apk` and passed all 119 JVM unit tests, including
-the four `FxPipelineTest` cases for valid generated graphs, lightning overlay,
-lightning-only fallback validation, and editor parameter propagation. The build includes the TextureView/
-EGL renderer, lightning generator graph branch, and parameter editor. The pinned
+It assembled `InfiniMedia-debug.apk` and passed all 121 JVM unit tests, including
+the five `FxPipelineTest` cases for valid generated graphs, lightning overlay,
+lightning-only fallback validation, visible idle baseline, and editor parameter
+propagation. The build includes the TextureView/EGL renderer, lightning generator graph
+branch, silent-band visibility floor, parameter editor, and `audio.fx.*`
+diagnostic events. The pinned
 libinfinisound Termux compatibility update remains at
 `3412205da2501248a0c89f5ab9402049fc89cfd9`.
 

@@ -98,7 +98,7 @@ internal data class LightningSpectrumStyle(
     val maxHeight: Float = .88f,
     val barGap: Float = .14f,
     val glow: Float = .9f,
-    val idleHeight: Float = .04f,
+    val idleHeight: Float = .14f,
 )
 
 
