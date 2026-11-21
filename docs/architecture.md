@@ -14,16 +14,20 @@ or Infiniscribe as Gradle projects and does not import their application source.
 - `modules/viewer-video` owns video playback controls, lifecycle, and media
   source leases while using the public `libinfinivideo` API for playback.
 - `modules/viewer-audio` keeps the PCM-driven spectrum, oscilloscope, and VU
-  presentation prototypes alongside image, video, and ANSI presentation.
-- The independent `libinfinifx` repository is not currently a dependency of this
-  app; reusable GPU effects can be integrated in a separate milestone.
+  prototypes and hosts a `libinfinifx` graph over audio artwork/static images.
+  Its `FxArtworkView` owns GLES surface/texture lifecycle; `RandomFxPipeline`
+  temporarily replaces one of two effect stages randomly per changed visual item.
+- `libinfinifx` owns the public graph/effect API, GLES executor, shaders, and
+  per-node state. Its Infinimedia adapter is app-owned and does not import this app.
 - `libinfinisound`, `libinfinivideo`, `libinfiniselect`, and `libinfiniui` own
   reusable APIs and adapters in their respective repositories.
 
 Some shared library types retain the `com.infinifolder.*` package namespace for
 compatibility. That namespace does not mean the Infinifolder application is a
 build dependency. Application and library revisions are pinned within this
-checkout; see [standalone build instructions](../README.md#fresh-checkout-build).
+checkout; see [standalone build instructions](../README.md#fresh-checkout-build). The
+libinfinifx dependency is source-pinned in `dependencies.lock.json` and included
+as a Gradle composite; no sibling checkout or app project dependency is used.
 
 ## Storage boundary
 

@@ -9,6 +9,10 @@
       "url": "https://github.com/infiniforge/libinfinicore.git",
       "commit": "0f98a0e9c94e9de0133e4e1ab53a1274b0fd33d8"
     },
+    "libinfinifx": {
+      "url": "https://github.com/infiniforge/libinfinifx.git",
+      "commit": "d09e115e5bb72dc8d21eb66441bb2ef0498ccfd4"
+    },
     "libinfiniscribe": {
       "url": "https://github.com/infiniforge/libinfiniscribe.git",
       "commit": "87076fc147f6f315a302a51f539c160a45b3d1da"

@@ -8,20 +8,13 @@ Winamp skins. Application ID: `com.infinimedia`; Android 8.0 (API 26) or newer.
 Audio/video UI lives in `modules/viewer-audio` and `modules/viewer-video`.
 Reusable decoding, synthesis and timing belong to libinfinisound/libinfinivideo.
 
-## Visualization prototypes
+## Visualization pipeline
 
-Infinimedia currently keeps its lightweight PCM-driven spectrum views: the
-segmented 16-band display in the player and the spectrum, oscilloscope, and VU
-modes in the classic Winamp window. These remain presentation prototypes rather
-than a general effects engine. Static and animated image, video, ANSI, and ANSI
-Music presentation also remain in the visual-media pane.
+The player retains its existing PCM-driven 16-band spectrum prototype and the classic Winamp spectrum, oscilloscope, and VU views. The media pane now also uses the standalone [libinfinifx](https://github.com/infiniforge/libinfinifx) GLES 3 library as a two-stage effect graph over audio artwork, static images, and a generated fallback image when a track has no art. Each distinct playlist visual item currently replaces one randomly selected pipeline stage with a different random effect. This temporary selection policy is isolated in `RandomFxPipeline` and is intended to be replaced by deliberate selection later; it adds no effect-picker UI.
 
-The experimental live heat/fire/smoke/lightning simulation overlay and its
-shared-field visualization module have been removed from this app. Infinimedia
-does not currently depend on or adapt the separate
-[libinfinifx](https://github.com/infiniforge/libinfinifx) library; a consumer
-integration is a separate milestone. The retained PCM analysis path continues
-to use libinfinisound and does not decode or analyze audio in the view layer.
+Available random stages are CRT, handheld LCD, water refraction, heat ripple, album-art rotozoom, kaleidoscope, and the fire generator with explicit alpha composition. The existing PCM analyzer remains in libinfinisound; its smoothed bands and VU values are adapted to optional normalized FX metadata. Rotozoom responds continuously to RMS and bass energy; host-supplied timestamped onset/beat events add a short zoom and rotation pulse. Infinimedia's current adapter maps levels only and does not invent a second beat detector. Animated image, video, ANSI, and ANSI Music continue on their existing presentation paths; the current library backend does not accept video's external OES texture.
+
+The earlier shared-field heat/smoke/wind/lightning app overlay remains removed. The retained spectrum, oscilloscope, and VU views remain prototypes and their layout has not changed. The new GPU surface and random graph behavior are source-implemented but have not yet been device-verified in this checkout. See [visualization integration status](docs/visualization-prototypes.md) and [architecture](docs/architecture.md).
 
 External storage is selected through libinfiniselect. Infinifolder adds advanced
 storage when installed; Android SAF remains available on its own. The APK does

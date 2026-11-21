@@ -19,6 +19,7 @@ dependencies {
     api("androidx.core:core:1.15.0")
     api("io.github.gretchycat.libinfinisound:audio-processing:0.2.0")
     implementation("io.github.gretchycat.libinfiniscribe:scribe-core:0.1.0")
+    implementation("io.github.infiniforge.libinfinifx:fx-gles:0.1.0")
     implementation("io.github.gretchycat.libinfiniselect:select-android:0.1.0")
     api(project(":viewer-video"))
     api("io.github.gretchycat.libinfiniui:ui-android:0.1.0")

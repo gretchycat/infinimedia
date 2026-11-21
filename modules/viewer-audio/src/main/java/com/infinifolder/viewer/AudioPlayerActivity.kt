@@ -7,6 +7,10 @@ import android.content.ClipData
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Shader
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.Typeface
@@ -156,6 +160,9 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private lateinit var artCard: FrameLayout
     private lateinit var albumArtView: ImageView
+    private lateinit var fxArtworkView: FxArtworkView
+    private val fxPipeline = RandomFxPipeline()
+    private val fxFallbackArtwork: Bitmap by lazy(LazyThreadSafetyMode.NONE) { createFxFallbackArtwork() }
     private lateinit var fullscreenVideoButton: TextView
     private var fullscreenVideoControls: LinearLayout? = null
     private var fullscreenPlayPauseControl: TextView? = null
@@ -366,6 +373,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             if (::dockedEqualizerView.isInitialized) dockedEqualizerView.invalidate()
         }
         applyTheme(ThemeManager.getAudioPlayerTheme(this))
+        if (::fxArtworkView.isInitialized) fxArtworkView.onResume()
         if (visualVideoWasPlayingBeforePause && AudioPlayerService.currentService?.currentTrack?.mediaKind == PlaylistMediaKind.VIDEO) {
             visualVideoPlayback?.play()
         }
@@ -396,6 +404,11 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         AudioPlayerService.currentService?.prioritizeMetadataTracks(emptyList())
         stopProgressFrames()
         visualizerBridge?.detach()
+        if (::fxArtworkView.isInitialized) {
+            fxArtworkView.setAudioMetadata(null)
+            fxArtworkView.releaseForHostPause()
+            fxArtworkView.onPause()
+        }
         if (::visualizerView.isInitialized) visualizerView.updateData(FloatArray(16))
         if (::visualPaneVisualizerView.isInitialized) visualPaneVisualizerView.updateData(FloatArray(16))
         super.onPause()
@@ -1657,6 +1670,10 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             setOnClickListener { showFullscreenVideoButton() }
         }
         artCard.addView(albumArtView)
+        fxArtworkView = FxArtworkView(this).apply {
+            setGraph(fxPipeline.graph())
+        }
+        artCard.addView(fxArtworkView, FrameLayout.LayoutParams(-1, -1))
 
         // The lower-third background hugs its text; the spectrum remains a
         // separate prototype overlay.
@@ -1973,6 +1990,17 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
             visualizerBridge?.getSpectrum(visualizerBands, isPlaying = playing)
             if (::visualizerView.isInitialized) visualizerView.updateData(visualizerBands)
             if (::visualPaneVisualizerView.isInitialized) visualPaneVisualizerView.updateData(visualizerBands)
+            if (::fxArtworkView.isInitialized) {
+                if (playing) {
+                    val vu = FloatArray(4)
+                    visualizerBridge?.getVuLevels(vu, isPlaying = true)
+                    fxArtworkView.setAudioMetadata(
+                        FxAudioMetadataAdapter.snapshot(visualizerBands.copyOf(), vu, System.nanoTime().coerceAtLeast(0L))
+                    )
+                } else {
+                    fxArtworkView.setAudioMetadata(null)
+                }
+            }
             if (::winampMainWindowView.isInitialized) winampMainWindowView.invalidate()
         }
         if (::winampMainWindowView.isInitialized) winampMainWindowView.visualizerBridge = visualizerBridge
@@ -2827,6 +2855,25 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         }.getOrNull()
     }
 
+    private fun createFxFallbackArtwork(): Bitmap {
+        val width = 640
+        val height = 360
+        return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->
+            val canvas = Canvas(bitmap)
+            val background = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = LinearGradient(0f, 0f, width.toFloat(), height.toFloat(),
+                    intArrayOf(0xFF101C35.toInt(), 0xFF203B62.toInt(), 0xFF612D4B.toInt()),
+                    null, Shader.TileMode.CLAMP)
+            }
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), background)
+            background.shader = null
+            background.color = 0x5567D9FF
+            canvas.drawCircle(width * 0.30f, height * 0.58f, height * 0.34f, background)
+            background.color = 0x66FFB15E
+            canvas.drawCircle(width * 0.72f, height * 0.42f, height * 0.27f, background)
+        }
+    }
+
     private fun loadPlaylistImage(track: AudioTrack, generation: Long) {
         val uri = track.uri
         albumArtView.visibility = View.VISIBLE
@@ -2867,6 +2914,8 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private fun setPlaylistImageDrawable(uri: Uri, bitmap: Bitmap) {
         (albumArtView.drawable as? android.graphics.drawable.Animatable)?.stop()
         val target = visualAnimationCache[uri.toString()] ?: BitmapDrawable(resources, bitmap).apply { isFilterBitmap = true }
+        val isAnimated = target is android.graphics.drawable.Animatable || visualBitmapAnimationCache.containsKey(uri.toString())
+        fxArtworkView.setSourceBitmap(if (isAnimated) null else bitmap)
         showPlaylistImageDrawable(target)
         (target as? android.graphics.drawable.Animatable)?.start()
     }
@@ -2919,6 +2968,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
     private fun startVisualImageAnimation(uri: Uri, bitmap: Bitmap) {
         stopVisualImageAnimation()
         val animation = visualBitmapAnimationCache[uri.toString()] ?: return
+        fxArtworkView.setSourceBitmap(null)
         val playback = PlaylistImageAnimationPlayback(animation, bitmap,
             onFrame = { albumArtView.invalidate() },
             onFailure = { error ->
@@ -3729,6 +3779,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
 
     private fun updateTrackView(track: AudioTrack?) {
         if (track == null) {
+            if (::fxArtworkView.isInitialized) fxArtworkView.setSourceBitmap(null)
             if (::visualPaneVisualizerView.isInitialized) visualPaneVisualizerView.visibility = View.GONE
             if (::albumArtView.isInitialized) albumArtView.alpha = 1f
             if (::visualPaneMetadata.isInitialized) visualPaneMetadata.alpha = 1f
@@ -3742,10 +3793,16 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 it.followingAudio.lengthBytes == track.lengthBytes
         }
         val wasShowingAnsi = ansiTerminalView.visibility == View.VISIBLE
-        val visualKey = "${track.mediaKind}:${track.uri}"
+        val visualKey = "${service?.currentIndex ?: -1}:${track.mediaKind}:${track.uri}:${track.startByte}:${track.lengthBytes}"
         val changedVisual = visualKey != activeVisualTrackKey
         if (changedVisual) {
             activeVisualTrackKey = visualKey
+            if (::fxArtworkView.isInitialized) {
+                fxArtworkView.setSourceBitmap(null)
+                val change = fxPipeline.replaceOneRandomStage()
+                fxArtworkView.setGraph(fxPipeline.graph(), resetHistory = true)
+                android.util.Log.i("InfiniMediaFx", "Random pipeline stage ${change.slot}: ${change.previous} -> ${change.replacement}")
+            }
             visualLoadGeneration.incrementAndGet()
             visualImageAdvanceHandler.removeCallbacks(visualImageAdvanceRunnable)
             albumArtView.animate().cancel()
@@ -3776,6 +3833,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
         val generation = visualLoadGeneration.get()
         when (track.mediaKind) {
             PlaylistMediaKind.ANSI -> {
+                fxArtworkView.setSourceBitmap(null)
                 visualPaneVisualizerView.visibility = View.GONE
                 albumArtView.alpha = 1f
                 visualPaneMetadata.alpha = 1f
@@ -3795,6 +3853,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 }
             }
             PlaylistMediaKind.IMAGE -> {
+                if (changedVisual) fxArtworkView.setSourceBitmap(null)
                 visualPaneVisualizerView.visibility = View.GONE
                 visualPaneMetadata.alpha = 1f
                 isShowingAnsiOverlay = false
@@ -3812,6 +3871,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 if (changedVisual) loadPlaylistImage(track, generation)
             }
             PlaylistMediaKind.VIDEO -> {
+                fxArtworkView.setSourceBitmap(null)
                 visualPaneVisualizerView.visibility = View.GONE
                 visualPaneMetadata.alpha = 1f
                 isShowingAnsiOverlay = false
@@ -3831,6 +3891,7 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                 visualPaneMetadata.visibility = View.VISIBLE
                 visualPaneDetailsText.text = metadataDetails
                 if (ansiOverlay != null) {
+                    fxArtworkView.setSourceBitmap(null)
                     visualPaneVisualizerView.visibility = View.GONE
                     albumArtView.alpha = 1f
                     visualPaneMetadata.alpha = 1f
@@ -3857,6 +3918,9 @@ class AudioPlayerActivity : ViewerActivity(), AudioPlayerListener, ThemeChangeLi
                         albumArtView.setBackgroundColor(Color.TRANSPARENT)
                     } else {
                         albumArtView.setBackgroundColor(ThemeManager.getAudioPlayerTheme(this).alternateBackground)
+                    }
+                    if (fxArtworkView.visibility != View.VISIBLE) {
+                        fxArtworkView.setSourceBitmap(activeArtwork ?: fxFallbackArtwork)
                     }
                     if (wasShowingAnsi) crossfadeFromAnsiToAlbumArt(artDrawable)
                     else if (changedVisual || albumArtView.drawable == null || audioArtwork != null) showPlaylistImageDrawable(artDrawable)

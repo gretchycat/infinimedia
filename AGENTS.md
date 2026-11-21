@@ -5,7 +5,7 @@ InfiniMedia is Infiniforge's standalone media player for audio, video, and image
 ## Independence and integration
 
 - Build this repository from its own checkout with its pinned library dependencies and documented Android toolchain. Do not depend on sibling application source, build outputs, or workspace-level paths.
-- Keep this app's Gradle build independent. Use public APIs from linked libraries such as libinfinisound, libinfinivideo, libinfiniselect, and libinfiniui where appropriate; do not make another app a build dependency.
+- Keep this app's Gradle build independent. Use public APIs from linked libraries such as libinfinisound, libinfinivideo, libinfinifx, libinfiniselect, and libinfiniui where appropriate; do not make another app a build dependency.
 - Use Android SAF and granted content URIs as the baseline for opening media. Integrate with Infinifolder through documented storage/provider contracts when available, and handle its absence gracefully.
 - Keep queue entries and saved playlists based on stable, authoritative resource identities. Do not persist temporary relay links or another app's private paths.
 - Keep reusable decoding and processing in libraries where that fits their API boundaries; keep player UI, queue behavior, and app-owned state in this application.
@@ -33,6 +33,7 @@ InfiniMedia is Infiniforge's standalone media player for audio, video, and image
 - `docs/APPLICATION.md` — application purpose, responsibilities, implementation status, planned work, and known limits.
 - `docs/ECOSYSTEM.md` — generated ecosystem-wide inventory, boundaries, dependencies, versions, and protocols.
 - `docs/architecture.md` — public API and architecture documentation; read before changing interfaces or behavior.
+- `docs/visualization-prototypes.md` — prototype and libinfinifx host-pipeline status, metadata mapping, and renderer limits.
 - `docs/storage.md` — public API and architecture documentation; read before changing interfaces or behavior.
 - `docs/audio-formats.md` — public API and architecture documentation; read before changing interfaces or behavior.
 - `docs/video-formats.md` — public API and architecture documentation; read before changing interfaces or behavior.
