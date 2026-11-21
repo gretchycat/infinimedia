@@ -19,8 +19,19 @@ class FxPipelineTest {
             assertNotEquals(change.previous, change.replacement)
             assertEquals(change.replacement, after[change.slot])
             assertTrue(before.indices.filter { it != change.slot }.all { before[it] == after[it] })
-            FxGraphValidator.validate(pipeline.graph(), BuiltinFx.byId)
+            val graph = pipeline.graph()
+            FxGraphValidator.validate(graph, BuiltinFx.byId)
+            assertEquals("generator:lightning-spectrum", graph.nodes.single { it.id == "lightning_spectrum" }.effectId)
+            assertTrue(graph.connections.any { it.fromNodeId == "lightning_spectrum" && it.inputPort == "overlay" })
         }
+    }
+
+    @Test fun lightningSpectrumEditorParametersReachTheGeneratorNode() {
+        val pipeline = RandomFxPipeline(Random(4))
+        pipeline.updateLightningSpectrumStyle(LightningSpectrumStyle(gain = 3.4f, maxHeight = .72f, barGap = .08f, glow = 1.2f))
+        val node = pipeline.graph().nodes.single { it.id == "lightning_spectrum" }
+        assertEquals(3.4f, (node.parameters.getValue("gain") as org.infiniforge.fx.api.FxParameterValue.FloatValue).value)
+        assertEquals(.72f, (node.parameters.getValue("maxHeight") as org.infiniforge.fx.api.FxParameterValue.FloatValue).value)
     }
 
     @Test fun existingAnalyzerLevelsMapToNormalizedFxMetadata() {

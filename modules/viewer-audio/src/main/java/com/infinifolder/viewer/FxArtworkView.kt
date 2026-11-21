@@ -60,6 +60,8 @@ internal class FxArtworkView @JvmOverloads constructor(
     private var pendingHistoryReset: FxDiscontinuity? = null
     private var session: EglSession? = null // render-thread owned
     private var lastFailure: String? = null
+    private var lastRenderAvailability: Boolean? = null
+    var onRenderAvailabilityChanged: ((Boolean) -> Unit)? = null
     private var frameIndex = 0L
     private var lastFrameNanos = 0L
 
@@ -278,6 +280,7 @@ internal class FxArtworkView @JvmOverloads constructor(
             when (val result = current.engine.render(graph, frame, FxRenderTarget(0, width, height))) {
                 is FxRenderResult.Success -> {
                     lastFailure = null
+                    setRenderAvailability(true)
                     val swapped = EGL14.eglSwapBuffers(current.display, current.windowSurface)
                     check(swapped) { eglFailure("eglSwapBuffers") }
                     true
@@ -312,9 +315,16 @@ internal class FxArtworkView @JvmOverloads constructor(
     }
 
     private fun reportFailure(key: String, error: Throwable?) {
+        setRenderAvailability(false)
         if (lastFailure == key) return
         lastFailure = key
         Log.e(TAG, "Infinifx renderer: $key", error)
+    }
+
+    private fun setRenderAvailability(available: Boolean) {
+        if (lastRenderAvailability == available) return
+        lastRenderAvailability = available
+        post { onRenderAvailabilityChanged?.invoke(available) }
     }
 
     private fun fitCenter(sourceWidth: Int, sourceHeight: Int, destinationWidth: Int, destinationHeight: Int): FxRect {

@@ -3,6 +3,7 @@ package com.infinifolder.viewer
 import org.infiniforge.fx.api.FxConnection
 import org.infiniforge.fx.api.FxGraph
 import org.infiniforge.fx.api.FxNode
+import org.infiniforge.fx.api.FxParameterValue
 import kotlin.random.Random
 
 /** A temporary test policy: keep a two-stage image pipeline and replace one stage per media item. */
@@ -18,6 +19,15 @@ internal class RandomFxPipeline(private val random: Random = Random.Default) {
     )
     private val stages = mutableListOf("display:crt", "distort:water-refraction")
     private var replacementCount = 0L
+    private var lightningStyle = LightningSpectrumStyle()
+
+    @Synchronized
+    fun lightningSpectrumStyle(): LightningSpectrumStyle = lightningStyle
+
+    @Synchronized
+    fun updateLightningSpectrumStyle(value: LightningSpectrumStyle) {
+        lightningStyle = value
+    }
 
     @Synchronized
     fun replaceOneRandomStage(): Change {
@@ -55,6 +65,23 @@ internal class RandomFxPipeline(private val random: Random = Random.Default) {
                 current = node
             }
         }
+        val spectrum = "lightning_spectrum"
+        val blend = "lightning_blend"
+        nodes += FxNode(
+            spectrum,
+            "generator:lightning-spectrum",
+            parameters = mapOf(
+                "gain" to FxParameterValue.FloatValue(lightningStyle.gain),
+                "maxHeight" to FxParameterValue.FloatValue(lightningStyle.maxHeight),
+                "barGap" to FxParameterValue.FloatValue(lightningStyle.barGap),
+                "glow" to FxParameterValue.FloatValue(lightningStyle.glow),
+                "idleHeight" to FxParameterValue.FloatValue(lightningStyle.idleHeight),
+            ),
+        )
+        nodes += FxNode(blend, "composite:blend")
+        connections += FxConnection(current, blend, "base")
+        connections += FxConnection(spectrum, blend, "overlay")
+        current = blend
         return FxGraph(
             name = "infinimedia-random-${replacementCount}",
             nodes = nodes,
@@ -65,3 +92,11 @@ internal class RandomFxPipeline(private val random: Random = Random.Default) {
 
     internal data class Change(val slot: Int, val previous: String, val replacement: String, val count: Long)
 }
+
+internal data class LightningSpectrumStyle(
+    val gain: Float = 2.6f,
+    val maxHeight: Float = .88f,
+    val barGap: Float = .14f,
+    val glow: Float = .9f,
+    val idleHeight: Float = .04f,
+)

@@ -7,9 +7,10 @@ reusable effects and graph execution.
 
 ## Retained prototypes
 
-- `VisualizerView` draws the segmented 16-band spectrum in the player console
-  and as a small overlay in the visual-media pane. Its layout and icon spacing
-  remain unchanged.
+- `VisualizerView` remains the segmented 16-band spectrum prototype in the
+  player console and classic Winamp modes. In the standard audio-artwork pane,
+  the lower-right prototype is hidden while the full-width InfiniFX lightning
+  spectrum renders; it is restored automatically if the GLES graph fails.
 - `WinampMainWindowView` can switch among spectrum, oscilloscope, and VU modes.
 - `RealAudioVisualizerBridge` reads decoded PCM through libinfinisound's shared
   analyzer. The views do not decode or analyze audio independently.
@@ -29,13 +30,19 @@ title/spectrum overlays. This replaces a SurfaceView configured as a media
 overlay, whose special surface z-order could place it behind ordinary content
 in the host window ([Android SurfaceView documentation](https://developer.android.com/reference/android/view/SurfaceView)). If the FX renderer fails, the original artwork remains visible as a fallback.
 
-`RandomFxPipeline` currently holds two sequential effect stages. On each
+`RandomFxPipeline` currently holds two sequential image-effect stages. On each
 changed visual playlist item it chooses one stage at random and replaces it with
-a different available effect ID. The options are CRT, LCD, water refraction,
+a different available effect ID. Each graph then adds an independent
+`generator:lightning-spectrum` branch and alpha-blends it over the processed
+artwork. Its 16 colored electric bars span the entire output width and use the
+current normalized audio bands; with missing/silent bands, a low autonomous
+baseline remains visible. The options are CRT, LCD, water refraction,
 heat ripple, album-art rotozoom, kaleidoscope, and the independent fire generator
 followed by an explicit alpha blend. This is temporary testing behavior, not a
 selection UI; deliberate user/app selection can later replace this policy while
-retaining the public graph/effect contracts. Effect IDs and parameter schemas
+retaining the public graph/effect contracts. The lower-left **EDIT LIGHTNING FX**
+control adjusts gain, maximum height, spacing, glow, and idle baseline, applying
+changes to the active graph as the sliders move. Effect IDs and parameter schemas
 come from libinfinifx.
 
 The host maps the existing smoothed 16 spectrum bands to normalized low/mid/high
@@ -64,14 +71,21 @@ not maintain shared effect simulation state.
 
 ## Verification status
 
-On 2026-11-20, the standalone Termux command
+On 2026-11-20, after pinning libinfinifx commit
+`dfac7609986107dc9e87229913f7761070f52299`, the standalone Termux command
 `./build.sh --no-daemon --max-workers=1 --console=plain` completed successfully.
-It assembled the debug APK and passed all 118 JVM unit tests, including both
-`FxPipelineTest` cases. This run includes the TextureView/EGL renderer change.
-The blocking native version guard was fixed by updating the pinned Termux inputs
-to installed libopenmpt 0.8.10 and libc++ 30 in libinfinisound commit
-`3412205da2501248a0c89f5ab9402049fc89cfd9`, and pinning that commit in this app.
-This verifies compilation and JVM behavior only; no Android device visual or
-performance acceptance has been run. Shader appearance, image orientation, and
-TextureView composition still need GLES device verification. See [app architecture](architecture.md) and the
+It assembled `InfiniMedia-debug.apk` and passed all 119 JVM unit tests, including
+the three `FxPipelineTest` cases for valid generated graphs, the lightning
+overlay, and editor parameter propagation. The build includes the TextureView/
+EGL renderer, lightning generator graph branch, and parameter editor. The pinned
+libinfinisound Termux compatibility update remains at
+`3412205da2501248a0c89f5ab9402049fc89cfd9`.
+
+The standalone libinfinifx validation at the same library commit also passed
+`:fx-core:test`, built its GLES library and sample APK, and passed
+`python3 scripts/validate-shaders.py` (12 shader checks). These are compile,
+portable unit-test, and shader-source checks only. `adb devices -l` reported no
+attached device, so the lightning appearance, orientation, TextureView
+composition, frame rate, and thermal behavior have **not been verified on an
+Android device**. See [app architecture](architecture.md) and the
 [libinfinifx effect guide](https://github.com/infiniforge/libinfinifx/blob/main/docs/effects.md).
